@@ -178,6 +178,19 @@ QSplitter::handle:vertical {
 """
 
 
+# ================================ 自定义控件 ================================ #
+
+class SearchLineEdit(QLineEdit):
+    """支持Esc键清除的搜索框"""
+
+    def keyPressEvent(self, event):
+        """处理按键事件"""
+        if event.key() == Qt.Key_Escape:
+            self.clear()
+        else:
+            super().keyPressEvent(event)
+
+
 # ================================ 工具函数 ================================ #
 
 def zero_pad(number: int, width: int = 3) -> str:
@@ -304,6 +317,9 @@ class CXProjectManager(QMainWindow):
         self.project_config: Optional[Dict] = None
         self.app_settings = QSettings("CXStudio", "ProjectManager")
 
+        # 初始化控件变量
+        self.cmb_cut_episode = None
+
         # 初始化浏览器相关变量
         self.txt_project_stats = None
         self.browser_tree = None
@@ -330,6 +346,11 @@ class CXProjectManager(QMainWindow):
 
         # 初始禁用所有操作控件（在UI创建后）
         self._enable_controls(False)
+
+        # 确保项目名称输入框始终启用
+        self.txt_project_name.setEnabled(True)
+        self.btn_new_project.setEnabled(True)
+        self.btn_open_project.setEnabled(True)
 
         # 加载软件配置
         self._load_app_settings()
@@ -492,13 +513,14 @@ class CXProjectManager(QMainWindow):
 
         # 创建单个 Cut
         single_cut_layout = QHBoxLayout()
-        self.txt_cut_episode = QLineEdit()
-        self.txt_cut_episode.setPlaceholderText("Episode (如: ep01, pv, op)")
+        self.cmb_cut_episode = QComboBox()
+        self.cmb_cut_episode.setPlaceholderText("选择 Episode")
+        self.cmb_cut_episode.setToolTip("选择要创建Cut的Episode")
         self.txt_cut = QLineEdit()
         self.txt_cut.setPlaceholderText("Cut 编号")
         self.btn_create_cut = QPushButton("创建")
         self.btn_create_cut.clicked.connect(lambda: self.create_cut())
-        single_cut_layout.addWidget(self.txt_cut_episode)
+        single_cut_layout.addWidget(self.cmb_cut_episode)
         single_cut_layout.addWidget(self.txt_cut)
         single_cut_layout.addWidget(self.btn_create_cut)
         cut_layout.addLayout(single_cut_layout)
@@ -659,16 +681,18 @@ class CXProjectManager(QMainWindow):
 
         # Cut 树组
         tree_group = QGroupBox("📂 Cut")
+        tree_group.setToolTip("按 Ctrl+F 快速搜索Cut")
         tree_layout = QVBoxLayout(tree_group)
 
         # Cut 搜索框
         search_layout = QHBoxLayout()
-        self.txt_cut_search = QLineEdit()
+        self.txt_cut_search = SearchLineEdit()
         self.txt_cut_search.setPlaceholderText("搜索 Cut (支持数字快速定位)...")
         self.txt_cut_search.textChanged.connect(self._on_cut_search_changed)
         self.txt_cut_search.setClearButtonEnabled(True)  # 添加内置清除按钮
         self.txt_cut_search.returnPressed.connect(self._select_first_match)  # 回车选择第一个匹配
-        self.txt_cut_search.setToolTip("输入Cut名称或数字进行搜索，按回车选择第一个匹配项")
+        self.txt_cut_search.setToolTip(
+            "输入Cut名称或数字进行搜索\n• 按回车选择第一个匹配项\n• 按Esc或点击清除按钮清空搜索\n• 快捷键: Ctrl+F")
         self.btn_clear_search = QPushButton("清除")
         self.btn_clear_search.clicked.connect(self._clear_cut_search)
         self.btn_clear_search.setMaximumWidth(60)
@@ -852,8 +876,28 @@ class CXProjectManager(QMainWindow):
                 return
 
         self._create_project_structure()
-        # 创建时间写入配置
-        self.project_config["created_time"] = datetime.now().isoformat()
+
+        # 初始化项目配置
+        self.project_config = {
+            "project_name": self.project_base.name,
+            "project_path": str(self.project_base),
+            "no_episode": self.chk_no_episode.isChecked(),
+            "episodes": {},
+            "cuts": [],  # 无 Episode 模式下的 cuts
+            "created_time": datetime.now().isoformat(),
+            "last_modified": datetime.now().isoformat(),
+            "paths": {
+                "reference": "00_reference_project",
+                "render": "06_render",
+                "assets": "07_master_assets",
+                "aep_templates": "07_master_assets/aep_templates",
+                "tools": "08_tools",
+                "vfx": "01_vfx",
+                "3dcg": "02_3dcg",
+                "tmp": "98_tmp",
+                "other": "99_other",
+            }
+        }
 
         # 保存配置
         self._save_project_config()
@@ -1114,6 +1158,10 @@ _统计信息将在创建 Episode 和 Cut 后自动更新_
         for dir_path in ep_dirs:
             ensure_dir(ep_path / dir_path)
 
+        # 在06_render目录下创建对应的Episode文件夹
+        render_ep_path = self.project_base / "06_render" / ep_id
+        ensure_dir(render_ep_path)
+
         # 更新配置
         if "episodes" not in self.project_config:
             self.project_config["episodes"] = {}
@@ -1123,6 +1171,7 @@ _统计信息将在创建 Episode 和 Cut 后自动更新_
         # 刷新 UI
         self._refresh_tree()
         self._update_import_combos()
+        self._update_cut_episode_combo()  # 更新Cut管理的Episode下拉框
         self._update_project_stats()  # 更新统计
 
         self.statusbar.showMessage(f"已创建 Episode: {ep_id}", 3000)
@@ -1178,6 +1227,7 @@ _统计信息将在创建 Episode 和 Cut 后自动更新_
             # 批量创建后刷新
             self._refresh_tree()
             self._update_import_combos()
+            self._update_cut_episode_combo()  # 更新Cut管理的Episode下拉框
             self._update_project_stats()  # 更新统计
 
     def create_cut(self, show_error=True):
@@ -1216,36 +1266,18 @@ _统计信息将在创建 Episode 和 Cut 后自动更新_
 
         else:
             # 有 Episode 模式
-            ep_input = self.txt_cut_episode.text().strip()
+            ep_input = self.cmb_cut_episode.currentText().strip()
             if not ep_input:
                 if show_error:
-                    QMessageBox.warning(self, "错误", "请输入 Episode")
+                    QMessageBox.warning(self, "错误", "请选择 Episode")
                 return
 
-            # 尝试匹配已存在的 Episode
-            ep_id = None
-            episodes = self.project_config.get("episodes", {})
+            # 直接使用下拉框中选择的Episode
+            ep_id = ep_input
 
-            # 首先尝试精确匹配
-            if ep_input in episodes:
-                ep_id = ep_input
-            else:
-                # 尝试标准化后匹配（如输入 "1" 匹配 "ep01"）
-                if ep_input.isdigit():
-                    standard_ep = f"ep{zero_pad(int(ep_input), 2)}"
-                    if standard_ep in episodes:
-                        ep_id = standard_ep
-
-                # 如果还是没找到，尝试模糊匹配
-                if not ep_id:
-                    for existing_ep in episodes:
-                        if ep_input.lower() in existing_ep.lower():
-                            ep_id = existing_ep
-                            break
-
-            if not ep_id:
+            if ep_id not in self.project_config.get("episodes", {}):
                 if show_error:
-                    QMessageBox.warning(self, "错误", f"Episode '{ep_input}' 不存在")
+                    QMessageBox.warning(self, "错误", f"Episode '{ep_id}' 不存在")
                 return
 
             if cut_id in self.project_config["episodes"][ep_id]:
@@ -1265,6 +1297,7 @@ _统计信息将在创建 Episode 和 Cut 后自动更新_
         if show_error:  # 单个创建时刷新
             self._refresh_tree()
             self._update_import_combos()
+            self._update_cut_episode_combo()  # 更新Cut管理的Episode下拉框
             self._update_project_stats()  # 更新统计
             self.statusbar.showMessage(f"已创建 Cut: {cut_id} (含 06_render 输出目录)", 3000)
 
@@ -1281,23 +1314,13 @@ _统计信息将在创建 Episode 和 Cut 后自动更新_
 
         # 如果是有 Episode 模式，先验证 Episode
         if not self.chk_no_episode.isChecked():
-            ep_input = self.txt_cut_episode.text().strip()
-            if not ep_input:
-                QMessageBox.warning(self, "错误", "批量创建需要先输入 Episode")
+            ep_id = self.cmb_cut_episode.currentText().strip()
+            if not ep_id:
+                QMessageBox.warning(self, "错误", "批量创建需要先选择 Episode")
                 return
 
-            # 查找匹配的 Episode
-            episodes = self.project_config.get("episodes", {})
-
-            if ep_input in episodes:
-                ep_id = ep_input
-            elif ep_input.isdigit():
-                standard_ep = f"ep{zero_pad(int(ep_input), 2)}"
-                if standard_ep in episodes:
-                    ep_id = standard_ep
-
-            if not ep_id:
-                QMessageBox.warning(self, "错误", f"Episode '{ep_input}' 不存在，请先创建该 Episode")
+            if ep_id not in self.project_config.get("episodes", {}):
+                QMessageBox.warning(self, "错误", f"Episode '{ep_id}' 不存在")
                 return
 
         # 批量创建
@@ -1332,6 +1355,7 @@ _统计信息将在创建 Episode 和 Cut 后自动更新_
             # 批量创建后刷新一次
             self._refresh_tree()
             self._update_import_combos()
+            self._update_cut_episode_combo()  # 更新Cut管理的Episode下拉框
             self._update_project_stats()  # 更新统计
 
     def _create_cut_structure(self, cut_path: Path, episode_id: Optional[str] = None):
@@ -1614,16 +1638,15 @@ _统计信息将在创建 Episode 和 Cut 后自动更新_
             no_episode = self.project_config.get("no_episode", False)
             self.chk_no_episode.setChecked(no_episode)
 
-            # 确保占位符文本正确
-            self.txt_cut_episode.setPlaceholderText("" if no_episode else "Episode (如: ep01, pv, op)")
-
             # 显示/隐藏 Episode 下拉框
+            self.cmb_cut_episode.setVisible(not no_episode)
             self.cmb_target_episode.setVisible(not no_episode)
             self.lbl_target_episode.setVisible(not no_episode)
 
             # 刷新界面
             self._refresh_tree()
             self._update_import_combos()
+            self._update_cut_episode_combo()  # 更新Cut管理的Episode下拉框
             self._update_project_stats()  # 更新统计
             self._update_browser_tree()  # 更新浏览器树
 
@@ -1650,6 +1673,7 @@ _统计信息将在创建 Episode 和 Cut 后自动更新_
             self.lbl_project_path.setStyleSheet("color: #999; font-style: italic;")
             self.tree.clear()
             self.cmb_target_episode.clear()
+            self.cmb_cut_episode.clear()
             self.cmb_target_cut.clear()
             self._clear_file_lists()
             self.txt_project_stats.clear()
@@ -1660,6 +1684,11 @@ _统计信息将在创建 Episode 和 Cut 后自动更新_
             self.current_path = None
             if self.txt_cut_search:
                 self.txt_cut_search.clear()
+
+            # 确保基本控件始终启用
+            self.txt_project_name.setEnabled(True)
+            self.btn_new_project.setEnabled(True)
+            self.btn_open_project.setEnabled(True)
 
     def _on_episode_type_changed(self, episode_type: str):
         """Episode 类型变化时的处理"""
@@ -1697,8 +1726,8 @@ _统计信息将在创建 Episode 和 Cut 后自动更新_
 
         # 更新 UI
         self.episode_group.setEnabled(not no_episode)
-        self.txt_cut_episode.setEnabled(not no_episode)
-        self.txt_cut_episode.setPlaceholderText("" if no_episode else "Episode")
+        self.cmb_cut_episode.setEnabled(not no_episode)
+        self.cmb_cut_episode.setVisible(not no_episode)
 
         # 显示/隐藏 Episode 下拉框
         self.cmb_target_episode.setVisible(not no_episode)
@@ -1709,17 +1738,15 @@ _统计信息将在创建 Episode 和 Cut 后自动更新_
             self.project_config["no_episode"] = no_episode
             self._save_project_config()
             self._update_import_combos()
+            self._update_cut_episode_combo()
 
     def _enable_controls(self, enabled: bool):
         """启用/禁用控件"""
-        # 新建和打开项目按钮始终启用
+        # 新建和打开项目按钮以及项目名称输入框始终启用
         # 其他控件根据项目状态启用/禁用
-        project_controls = [
-            self.txt_project_name,
-            self.chk_no_episode,
-        ]
 
         operation_controls = [
+            self.chk_no_episode,
             self.episode_group,
             self.cmb_episode_type,
             self.txt_episode,
@@ -1728,7 +1755,7 @@ _统计信息将在创建 Episode 和 Cut 后自动更新_
             self.lbl_batch_ep,
             self.spin_ep_from,
             self.spin_ep_to,
-            self.txt_cut_episode,
+            self.cmb_cut_episode,
             self.txt_cut,
             self.btn_create_cut,
             self.btn_batch_cut,
@@ -1749,10 +1776,7 @@ _统计信息将在创建 Episode 和 Cut 后自动更新_
             self.txt_timesheet_path,
         ]
 
-        # 合并控件列表
-        all_controls = project_controls + operation_controls
-
-        for control in all_controls:
+        for control in operation_controls:
             control.setEnabled(enabled)
 
         # 如果启用且不是标准 ep 类型，调整批量创建的可用性
@@ -2280,6 +2304,22 @@ _统计信息将在创建 Episode 和 Cut 后自动更新_
         except Exception as e:
             print(f"更新README统计失败: {e}")
 
+    def _update_cut_episode_combo(self):
+        """更新Cut管理中的Episode下拉列表"""
+        self.cmb_cut_episode.clear()
+
+        if not self.project_config:
+            return
+
+        if not self.project_config.get("no_episode", False):
+            # 有 Episode 模式，添加所有Episode
+            episodes = self.project_config.get("episodes", {})
+            if episodes:
+                self.cmb_cut_episode.addItems(sorted(episodes.keys()))
+                # 如果之前没有选中项，设置为未选择状态
+                if self.cmb_cut_episode.count() > 0:
+                    self.cmb_cut_episode.setCurrentIndex(-1)
+
     # ========================== 软件设置 ========================== #
 
     def _load_app_settings(self):
@@ -2519,7 +2559,7 @@ _统计信息将在创建 Episode 和 Cut 后自动更新_
 # ================================ 导出的组件 ================================ #
 # 这些组件可以在其他程序中导入使用
 
-__all__ = ['ProjectBrowser', 'CXProjectManager']
+__all__ = ['ProjectBrowser', 'CXProjectManager', 'SearchLineEdit']
 
 
 # ================================ 主程序入口 ================================ #
