@@ -6,9 +6,11 @@ CX Project Manager - 动画项目管理工具
 • 支持有/无 Episode 模式（单集/PV）
 • Episode 和 Cut 的创建与批量创建
 • 素材导入管理（BG/Cell/Timesheet/AEP）
+• AEP 模板批量复制功能
 • 项目配置持久化
 • 软件配置记忆（默认路径、最近项目）
 • 目录树可视化
+• Cut 搜索功能
 • 深色主题 UI
 """
 
@@ -21,7 +23,6 @@ import platform
 from datetime import datetime
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
-
 from PySide6.QtCore import Qt, QSettings, Signal
 from PySide6.QtGui import QAction, QFont, QIcon, QBrush, QColor
 from PySide6.QtWidgets import (
@@ -29,7 +30,8 @@ from PySide6.QtWidgets import (
     QHBoxLayout, QLabel, QLineEdit, QMainWindow, QMenu, QMenuBar,
     QMessageBox, QPushButton, QSpinBox, QSplitter, QStatusBar,
     QTreeWidget, QTreeWidgetItem, QVBoxLayout, QWidget, QTabWidget,
-    QTextEdit, QListWidget, QListWidgetItem
+    QTextEdit, QListWidget, QListWidgetItem, QDialog, QDialogButtonBox,
+    QRadioButton, QButtonGroup
 )
 
 # ================================ 样式表 ================================ #
@@ -75,10 +77,12 @@ QLineEdit, QSpinBox, QComboBox {
     border-radius: 4px;
     padding: 4px 6px;
     min-height: 24px;
+    height: 24px;
 }
 
 QLineEdit:focus, QSpinBox:focus, QComboBox:focus {
-    border-color: #0D7ACC;
+    border-color: #03A9F4;
+    background-color: #2A2A2A;
 }
 
 /* 标签样式 */
@@ -106,18 +110,70 @@ QListWidget {
     border: 1px solid #3C3C3C;
     border-radius: 4px;
     outline: none;
+    alternate-background-color: #2F2F2F;  /* 隔行背景色 - 调亮一点 */
 }
 
 QListWidget::item {
     padding: 4px 8px;
+    background-color: transparent;
+}
+
+QListWidget::item:alternate {
+    background-color: #2F2F2F;  /* 偶数行背景色 */
 }
 
 QListWidget::item:hover {
-    background-color: #2A2A2A;
+    background-color: #3A3A3A !important;  /* 确保悬停效果优先 */
 }
 
 QListWidget::item:selected {
-    background-color: #0D7ACC;
+    background-color: #03A9F4 !important;  /* 确保选中效果优先 */
+}
+
+/* Tab控件样式 */
+QTabWidget::pane {
+    background-color: #262626;
+    border: 1px solid #3C3C3C;
+    border-radius: 4px;
+    top: -1px;
+}
+
+QTabWidget::tab-bar {
+    left: 0px;
+}
+
+QTabBar::tab {
+    background-color: #2D2D2D;
+    color: #B0B0B0;
+    border: 1px solid #3C3C3C;
+    border-bottom: none;
+    padding: 6px 16px;
+    margin-right: 2px;
+    min-width: 60px;
+}
+
+QTabBar::tab:first {
+    border-top-left-radius: 4px;
+}
+
+QTabBar::tab:last {
+    border-top-right-radius: 4px;
+}
+
+QTabBar::tab:hover {
+    background-color: #3A3A3A;
+    color: #E0E0E0;
+}
+
+QTabBar::tab:selected {
+    background-color: #03A9F4;
+    color: #FFFFFF;
+    font-weight: bold;
+    border-color: #03A9F4;
+}
+
+QTabBar::tab:!selected {
+    margin-top: 2px;
 }
 
 /* 菜单样式 */
@@ -136,7 +192,7 @@ QMenu {
 }
 
 QMenu::item:selected {
-    background-color: #0D7ACC;
+    background-color: #03A9F4;
 }
 
 /* 状态栏样式 */
@@ -159,8 +215,20 @@ QCheckBox::indicator {
 }
 
 QCheckBox::indicator:checked {
-    background-color: #0D7ACC;
-    border-color: #0D7ACC;
+    background-color: #03A9F4;
+    border-color: #03A9F4;
+}
+
+QCheckBox::indicator:checked::after {
+    content: "";
+    position: absolute;
+    width: 6px;
+    height: 10px;
+    border: solid white;
+    border-width: 0 2px 2px 0;
+    transform: rotate(45deg);
+    top: 2px;
+    left: 5px;
 }
 
 /* 分割器样式 */
@@ -174,6 +242,189 @@ QSplitter::handle:horizontal {
 
 QSplitter::handle:vertical {
     height: 4px;
+}
+
+QSplitter::handle:hover {
+    background-color: #03A9F4;
+}
+
+/* 树控件样式 */
+QTreeWidget {
+    background-color: #262626;
+    border: 1px solid #3C3C3C;
+    border-radius: 4px;
+    outline: none;
+    alternate-background-color: #2F2F2F;  /* 隔行背景色 - 调亮一点 */
+}
+
+QTreeWidget::item {
+    padding: 4px;
+    background-color: transparent;
+}
+
+QTreeWidget::item:alternate {
+    background-color: #2F2F2F;  /* 偶数行背景色 */
+}
+
+QTreeWidget::item:hover {
+    background-color: #3A3A3A !important;  /* 确保悬停效果优先 */
+}
+
+QTreeWidget::item:selected {
+    background-color: #03A9F4 !important;  /* 确保选中效果优先 */
+}
+
+/* 树控件展开/折叠箭头 - 16x16像素 */
+QTreeWidget::branch:has-children:closed {
+    image: url(_imgs/tree_arrow_closed.png);
+}
+
+QTreeWidget::branch:has-children:open {
+    image: url(_imgs/tree_arrow_open.png);
+}
+
+QTreeWidget::branch:has-children:closed:hover {
+    image: url(_imgs/tree_arrow_closed_hover.png);
+}
+
+QTreeWidget::branch:has-children:open:hover {
+    image: url(_imgs/tree_arrow_open_hover.png);
+}
+
+/* 树控件标题栏样式 */
+QHeaderView::section {
+    background: #3C3C3C;
+    border: none;
+    padding: 4px 8px;
+    font-weight: bold;
+    color: #B0B0B0;
+}
+
+QHeaderView::section:hover {
+    background: #4A4A4A;
+    color: #E0E0E0;
+}
+
+QHeaderView {
+    background: none;
+    border: none;
+}
+
+/* 文本编辑框样式 */
+QTextEdit {
+    background-color: #262626;
+    border: 1px solid #3C3C3C;
+    border-radius: 4px;
+}
+
+/* 滚动条样式 */
+QScrollBar:vertical {
+    background-color: #262626;
+    width: 12px;
+    border-radius: 6px;
+}
+
+QScrollBar::handle:vertical {
+    background-color: #3C3C3C;
+    min-height: 20px;
+    border-radius: 6px;
+}
+
+QScrollBar::handle:vertical:hover {
+    background-color: #4A4A4A;
+}
+
+QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {
+    height: 0px;
+}
+
+QScrollBar:horizontal {
+    background-color: #262626;
+    height: 12px;
+    border-radius: 6px;
+}
+
+QScrollBar::handle:horizontal {
+    background-color: #3C3C3C;
+    min-width: 20px;
+    border-radius: 6px;
+}
+
+QScrollBar::handle:horizontal:hover {
+    background-color: #4A4A4A;
+}
+
+QScrollBar::add-line:horizontal, QScrollBar::sub-line:horizontal {
+    width: 0px;
+}
+
+/* SpinBox按钮样式 */
+QSpinBox::up-button, QSpinBox::down-button {
+    background-color: #2D2D2D;
+    border: 1px solid #3C3C3C;
+    width: 16px;
+}
+
+QSpinBox::up-button:hover, QSpinBox::down-button:hover {
+    background-color: #03A9F4;
+}
+
+/* SpinBox箭头 - 12x12像素 */
+QSpinBox::up-arrow {
+    image: url(_imgs/spinbox_arrow_up.png);
+    width: 12px;
+    height: 12px;
+}
+
+QSpinBox::down-arrow {
+    image: url(_imgs/spinbox_arrow_down.png);
+    width: 12px;
+    height: 12px;
+}
+
+QSpinBox::up-arrow:hover {
+    image: url(_imgs/spinbox_arrow_up_hover.png);
+}
+
+QSpinBox::down-arrow:hover {
+    image: url(_imgs/spinbox_arrow_down_hover.png);
+}
+
+QSpinBox::up-arrow:disabled, QSpinBox::down-arrow:disabled {
+    image: url(_imgs/spinbox_arrow_disabled.png);
+}
+
+/* ComboBox下拉按钮样式 */
+QComboBox::drop-down {
+    border: none;
+    width: 20px;
+    background-color: transparent;
+}
+
+/* ComboBox箭头 - 12x12像素 */
+QComboBox::down-arrow {
+    image: url(_imgs/combobox_arrow_down.png);
+    width: 12px;
+    height: 12px;
+}
+
+QComboBox::down-arrow:hover {
+    image: url(_imgs/combobox_arrow_down_hover.png);
+}
+
+QComboBox::down-arrow:on {
+    image: url(_imgs/combobox_arrow_up.png);  /* 展开时显示向上箭头 */
+}
+
+QComboBox::down-arrow:disabled {
+    image: url(_imgs/combobox_arrow_disabled.png);
+}
+
+QComboBox QAbstractItemView {
+    background-color: #2D2D2D;
+    border: 1px solid #3C3C3C;
+    selection-background-color: #03A9F4;
+    outline: none;
 }
 """
 
@@ -189,6 +440,165 @@ class SearchLineEdit(QLineEdit):
             self.clear()
         else:
             super().keyPressEvent(event)
+
+
+class BatchAepDialog(QDialog):
+    """批量复制AEP模板对话框"""
+
+    def __init__(self, project_config: Dict, parent=None):
+        super().__init__(parent)
+        self.project_config = project_config
+        project_name = project_config.get("project_name", "未命名项目")
+        self.setWindowTitle(f"批量复制 AEP 模板 - {project_name}")
+        self.setModal(True)
+        self.resize(450, 350)
+
+        # 应用与主界面一致的样式
+        self.setStyleSheet(QSS_THEME)
+
+        self._setup_ui()
+
+    def _setup_ui(self):
+        """设置UI"""
+        layout = QVBoxLayout(self)
+
+        # 模板信息提示
+        info_label = QLabel()
+        template_count = self._get_template_count()
+        if template_count > 0:
+            info_label.setText(f"ℹ️ 找到 {template_count} 个 AEP 模板文件")
+            info_label.setStyleSheet("color: #03A9F4; padding: 8px;")
+        else:
+            info_label.setText("⚠️ 未找到 AEP 模板文件")
+            info_label.setStyleSheet("color: #FF9800; padding: 8px;")
+        layout.addWidget(info_label)
+
+        # 选择范围
+        scope_group = QGroupBox("选择范围")
+        scope_layout = QVBoxLayout(scope_group)
+
+        self.radio_all = QRadioButton("所有 Episode 和 Cut")
+        self.radio_episode = QRadioButton("指定 Episode 的所有 Cut")
+        self.radio_selected = QRadioButton("指定 Episode 和 Cut 范围")
+
+        self.radio_group = QButtonGroup()
+        self.radio_group.addButton(self.radio_all, 0)
+        self.radio_group.addButton(self.radio_episode, 1)
+        self.radio_group.addButton(self.radio_selected, 2)
+
+        self.radio_all.setChecked(True)
+
+        scope_layout.addWidget(self.radio_all)
+        scope_layout.addWidget(self.radio_episode)
+        scope_layout.addWidget(self.radio_selected)
+
+        # Episode 选择
+        ep_layout = QHBoxLayout()
+        self.lbl_episode = QLabel("Episode:")
+        self.cmb_episode = QComboBox()
+        self.cmb_episode.setEnabled(False)
+
+        # 填充Episode列表
+        if not self.project_config.get("no_episode", False):
+            episodes = self.project_config.get("episodes", {})
+            self.cmb_episode.addItems(sorted(episodes.keys()))
+
+        ep_layout.addWidget(self.lbl_episode)
+        ep_layout.addWidget(self.cmb_episode)
+        scope_layout.addLayout(ep_layout)
+
+        # Cut 范围选择
+        cut_layout = QHBoxLayout()
+        self.lbl_cut_range = QLabel("Cut 范围:")
+        self.spin_cut_from = QSpinBox()
+        self.spin_cut_from.setRange(1, 999)
+        self.spin_cut_from.setValue(1)
+        self.spin_cut_from.setEnabled(False)
+
+        self.lbl_cut_to = QLabel("到")
+        self.spin_cut_to = QSpinBox()
+        self.spin_cut_to.setRange(1, 999)
+        self.spin_cut_to.setValue(100)  # 默认值改为100
+        self.spin_cut_to.setEnabled(False)
+
+        cut_layout.addWidget(self.lbl_cut_range)
+        cut_layout.addWidget(self.spin_cut_from)
+        cut_layout.addWidget(self.lbl_cut_to)
+        cut_layout.addWidget(self.spin_cut_to)
+        cut_layout.addStretch()
+        scope_layout.addLayout(cut_layout)
+
+        layout.addWidget(scope_group)
+
+        # 选项
+        options_group = QGroupBox("选项")
+        options_layout = QVBoxLayout(options_group)
+
+        self.chk_overwrite = QCheckBox("覆盖已存在的文件")
+        self.chk_overwrite.setChecked(False)
+
+        self.chk_skip_existing = QCheckBox("跳过已有 AEP 文件的 Cut")
+        self.chk_skip_existing.setChecked(True)
+
+        options_layout.addWidget(self.chk_overwrite)
+        options_layout.addWidget(self.chk_skip_existing)
+
+        layout.addWidget(options_group)
+
+        # 按钮
+        self.buttons = QDialogButtonBox(
+            QDialogButtonBox.Ok | QDialogButtonBox.Cancel
+        )
+        self.buttons.button(QDialogButtonBox.Ok).setText("开始复制")
+        self.buttons.button(QDialogButtonBox.Cancel).setText("取消")
+        self.buttons.accepted.connect(self.accept)
+        self.buttons.rejected.connect(self.reject)
+
+        layout.addWidget(self.buttons)
+
+        # 连接信号
+        self.radio_group.buttonClicked.connect(self._on_scope_changed)
+        self.chk_overwrite.toggled.connect(self._on_overwrite_changed)
+
+    def _get_template_count(self) -> int:
+        """获取模板文件数量"""
+        if not hasattr(self.parent(), 'project_base') or not self.parent().project_base:
+            return 0
+
+        template_dir = self.parent().project_base / "07_master_assets" / "aep_templates"
+        if not template_dir.exists():
+            return 0
+
+        return len(list(template_dir.glob("*.aep")))
+
+    def _on_scope_changed(self, button):
+        """范围选择改变时的处理"""
+        scope_id = self.radio_group.id(button)
+
+        # 根据选择启用/禁用相应控件
+        self.cmb_episode.setEnabled(scope_id >= 1)
+        self.spin_cut_from.setEnabled(scope_id == 2)
+        self.spin_cut_to.setEnabled(scope_id == 2)
+
+    def _on_overwrite_changed(self, checked):
+        """覆盖选项改变时的处理"""
+        if checked:
+            self.chk_skip_existing.setChecked(False)
+
+    def get_settings(self) -> Dict:
+        """获取用户设置"""
+        scope_id = self.radio_group.checkedId()
+
+        settings = {
+            "scope": scope_id,  # 0: all, 1: episode, 2: selected
+            "episode": self.cmb_episode.currentText() if scope_id >= 1 else None,
+            "cut_from": self.spin_cut_from.value() if scope_id == 2 else None,
+            "cut_to": self.spin_cut_to.value() if scope_id == 2 else None,
+            "overwrite": self.chk_overwrite.isChecked(),
+            "skip_existing": self.chk_skip_existing.isChecked(),
+        }
+
+        return settings
 
 
 # ================================ 工具函数 ================================ #
@@ -319,6 +729,7 @@ class CXProjectManager(QMainWindow):
 
         # 初始化控件变量
         self.cmb_cut_episode = None
+        self.btn_batch_copy_aep = None
 
         # 初始化浏览器相关变量
         self.txt_project_stats = None
@@ -623,14 +1034,24 @@ class CXProjectManager(QMainWindow):
         self.btn_import_all = QPushButton("批量导入")
         self.btn_copy_aep = QPushButton("复制 AEP 模板")
 
+        # AEP模板批量操作
+        self.btn_batch_copy_aep = QPushButton("批量复制 AEP")
+        self.btn_batch_copy_aep.setToolTip("批量复制AEP模板到多个Cut并自动重命名")
+
+
         self.btn_import_single.clicked.connect(self.import_single)
         self.btn_import_all.clicked.connect(self.import_all)
         self.btn_copy_aep.clicked.connect(self.copy_aep_template)
+        self.btn_batch_copy_aep.clicked.connect(self.batch_copy_aep_template)
 
         import_action_layout.addWidget(self.btn_import_single)
         import_action_layout.addWidget(self.btn_import_all)
         import_action_layout.addWidget(self.btn_copy_aep)
+        import_action_layout.addWidget(self.btn_batch_copy_aep)
         import_layout.addLayout(import_action_layout)
+
+
+
 
         layout.addWidget(import_group)
 
@@ -741,22 +1162,27 @@ class CXProjectManager(QMainWindow):
 
         # VFX 文件列表
         self.vfx_list = QListWidget()
+        self.vfx_list.setAlternatingRowColors(True)
         self.vfx_list.itemDoubleClicked.connect(lambda item: self._open_file_location(item))
 
         # Cell 文件列表
         self.cell_list = QListWidget()
+        self.cell_list.setAlternatingRowColors(True)
         self.cell_list.itemDoubleClicked.connect(lambda item: self._open_file_location(item))
 
         # BG 文件列表
         self.bg_list = QListWidget()
+        self.bg_list.setAlternatingRowColors(True)
         self.bg_list.itemDoubleClicked.connect(lambda item: self._open_file_location(item))
 
         # Render 文件列表
         self.render_list = QListWidget()
+        self.render_list.setAlternatingRowColors(True)
         self.render_list.itemDoubleClicked.connect(lambda item: self._open_file_location(item))
 
         # 3DCG 文件列表
         self.cg_list = QListWidget()
+        self.cg_list.setAlternatingRowColors(True)
         self.cg_list.itemDoubleClicked.connect(lambda item: self._open_file_location(item))
 
         self.file_tabs.addTab(self.vfx_list, "VFX")
@@ -772,7 +1198,7 @@ class CXProjectManager(QMainWindow):
         main_splitter.addWidget(left_panel)
         main_splitter.addWidget(right_panel)
         main_splitter.setStretchFactor(0, 1)  # 左侧占1份
-        main_splitter.setStretchFactor(1, 3)  # 右侧占2份
+        main_splitter.setStretchFactor(1, 2)  # 右侧占2份
 
         layout.addWidget(main_splitter)
 
@@ -827,15 +1253,46 @@ class CXProjectManager(QMainWindow):
         act_search_cut.triggered.connect(self._focus_cut_search)
         tools_menu.addAction(act_search_cut)
 
+        tools_menu.addSeparator()
+
+        act_batch_aep = QAction("批量复制AEP模板...", self)
+        act_batch_aep.triggered.connect(self.batch_copy_aep_template)
+        tools_menu.addAction(act_batch_aep)
+
+        tools_menu.addSeparator()
+
         act_open_folder = QAction("在文件管理器中打开", self)
         act_open_folder.triggered.connect(self.open_in_explorer)
         tools_menu.addAction(act_open_folder)
+
+        # 帮助菜单
+        help_menu = menubar.addMenu("帮助")
+        act_help = QAction("使用说明", self)
+        act_help.triggered.connect(self.show_help)
+        help_menu.addAction(act_help)
+
+        act_about = QAction("关于", self)
+        act_about.triggered.connect(self.show_about)
+        help_menu.addAction(act_about)
+
+        self._setup_statusbar()
 
     def _setup_statusbar(self):
         """设置状态栏"""
         self.statusbar = QStatusBar()
         self.setStatusBar(self.statusbar)
         self.statusbar.showMessage("请打开或新建项目以开始使用")
+
+    def show_help(self):
+        pass
+
+    def show_about(self):
+        """显示关于对话框"""
+        QMessageBox.about(self, "关于", "CX Project Manager - 动画项目管理工具\n\n"
+                                        "版本: 1.0\n"
+                                        "作者: 千石まよひ\n"
+                                        "GitHub: https://github.com/ChenxingM/CXProjectManager\n\n"
+                                        "用于管理动画项目的工具，支持项目创建、浏览、素材导入等功能。")
 
     # ========================== 项目操作 ========================== #
 
@@ -1068,7 +1525,16 @@ _统计信息将在创建 Episode 和 Cut 后自动更新_
 - Cell: 导入整个文件夹 → `title_EPXX_XXX_t1/`
 - 3DCG: 导入文件夹到对应 Cut（自动创建目录）
 - Timesheet: 导入 CSV 文件 → `XXX.csv`
-- AEP: 从模板复制 → `title_EPXX_XXX_v0.aep`
+- AEP: 从模板复制 → `title_EPXX_XXX_[版本].aep`（保留模板版本信息）
+
+### AEP 模板批量复制
+- 单个复制：选择目标 Episode 和 Cut，点击"复制 AEP 模板"
+- 批量复制：点击"📋 批量复制 AEP 模板"，可选择：
+  - 复制到所有 Episode 和 Cut
+  - 复制到指定 Episode 的所有 Cut
+  - 复制到指定 Episode 的 Cut 范围（如 001-100）
+  - 选项：覆盖已存在文件 / 跳过已有 AEP 的 Cut
+- 命名规则：自动保留模板文件中的版本信息（如 _v1, _v2 等）
 
 注：无 Episode 模式下，文件名中不包含 EP 部分
 """
@@ -1372,6 +1838,7 @@ _统计信息将在创建 Episode 和 Cut 后自动更新_
 
         # 获取 cut_id
         cut_id = cut_path.name
+        proj_name = self.project_base.name
 
         # 创建 render 目录结构
         if episode_id:
@@ -1390,14 +1857,23 @@ _统计信息将在创建 Episode 和 Cut 后自动更新_
         template_dir = self.project_base / "07_master_assets" / "aep_templates"
         if template_dir.exists():
             for template in template_dir.glob("*.aep"):
-                # 新的命名格式：title_EPXX_XXX_v0.aep（全大写）
+                # 保留模板的原始文件名中的版本号或其他信息
+                template_stem = template.stem
+
+                # 构建新文件名
                 if episode_id:
-                    # 提取 Episode 编号部分（如 ep01 -> EP01）
                     ep_part = episode_id.upper()
-                    aep_name = f"title_{ep_part}_{cut_id}_v0{template.suffix}"
+                    if '_v' in template_stem:
+                        version_part = template_stem[template_stem.rfind('_v'):]
+                        aep_name = f"{proj_name}_{ep_part}_{cut_id}{version_part}{template.suffix}"
+                    else:
+                        aep_name = f"{proj_name}_{ep_part}_{cut_id}_v0{template.suffix}"
                 else:
-                    # 无 Episode 模式
-                    aep_name = f"title_{cut_id}_v0{template.suffix}"
+                    if '_v' in template_stem:
+                        version_part = template_stem[template_stem.rfind('_v'):]
+                        aep_name = f"{proj_name}_{cut_id}{version_part}{template.suffix}"
+                    else:
+                        aep_name = f"{proj_name}_{cut_id}_v0{template.suffix}"
 
                 dst = cut_path / aep_name
                 copy_file_safe(template, dst)
@@ -1510,6 +1986,8 @@ _统计信息将在创建 Episode 和 Cut 后自动更新_
             if not src.exists():
                 return False
 
+            proj_name = self.project_base.name
+
             # 解析目标路径
             if "|" in target:
                 ep_id, cut_id = target.split("|")
@@ -1525,9 +2003,9 @@ _统计信息将在创建 Episode 和 Cut 后自动更新_
                 # BG 命名格式也改为包含 Episode 信息（全大写）
                 if "|" in target:
                     ep_part = ep_id.upper()
-                    file_name = f"title_{ep_part}_{cut_id}_t1{src.suffix.lower()}"
+                    file_name = f"{proj_name}_{ep_part}_{cut_id}_t1{src.suffix.lower()}"
                 else:
-                    file_name = f"title_{cut_id}_t1{src.suffix.lower()}"
+                    file_name = f"{proj_name}_{cut_id}_t1{src.suffix.lower()}"
 
                 dst = vfx_base / cut_id / "bg" / file_name
                 ensure_dir(dst.parent)
@@ -1537,9 +2015,9 @@ _统计信息将在创建 Episode 和 Cut 后自动更新_
                 # Cell 文件夹命名也包含 Episode 信息（全大写）
                 if "|" in target:
                     ep_part = ep_id.upper()
-                    folder_name = f"title_{ep_part}_{cut_id}_t1"
+                    folder_name = f"{proj_name}_{ep_part}_{cut_id}_t1"
                 else:
-                    folder_name = f"title_{cut_id}_t1"
+                    folder_name = f"{proj_name}_{cut_id}_t1"
 
                 cell_dir = vfx_base / cut_id / "cell" / folder_name
                 if cell_dir.exists():
@@ -1603,27 +2081,221 @@ _统计信息将在创建 Episode 和 Cut 后自动更新_
             )
             return
 
+        proj_name = self.project_base.name
+
         # 复制所有模板
         copied = 0
         for template in template_dir.glob("*.aep"):
-            # 使用与 _create_cut_structure 相同的命名格式
+            # 保留模板的原始文件名中的版本号或其他信息
+            template_stem = template.stem
+
+            # 构建新文件名
             if ep_id:
-                # 提取 Episode 编号部分（如 ep01 -> EP01）
                 ep_part = ep_id.upper()
-                aep_name = f"title_{ep_part}_{cut_id}_v0{template.suffix}"
+                if '_v' in template_stem:
+                    version_part = template_stem[template_stem.rfind('_v'):]
+                    aep_name = f"{proj_name}_{ep_part}_{cut_id}{version_part}{template.suffix}"
+                else:
+                    aep_name = f"{proj_name}_{ep_part}_{cut_id}_v0{template.suffix}"
             else:
-                # 无 Episode 模式
-                aep_name = f"title_{cut_id}_v0{template.suffix}"
+                if '_v' in template_stem:
+                    version_part = template_stem[template_stem.rfind('_v'):]
+                    aep_name = f"{proj_name}_{cut_id}{version_part}{template.suffix}"
+                else:
+                    aep_name = f"{proj_name}_{cut_id}_v0{template.suffix}"
 
             dst = cut_path / aep_name
             if copy_file_safe(template, dst):
                 copied += 1
 
-        if copied > 0:
-            QMessageBox.information(
-                self, "成功", f"已复制 {copied} 个 AEP 模板到 Cut {cut_id}"
+        QMessageBox.information(
+            self, "成功", f"已复制 {copied} 个 AEP 模板到 Cut {cut_id}"
+        )
+        self._refresh_tree()
+
+
+    def batch_copy_aep_template(self):
+        """批量复制 AEP 模板"""
+        if not self.project_base:
+            QMessageBox.warning(self, "错误", "请先打开或创建项目")
+            return
+
+        # 检查模板目录
+        template_dir = self.project_base / "07_master_assets" / "aep_templates"
+        if not template_dir.exists() or not list(template_dir.glob("*.aep")):
+            QMessageBox.warning(
+                self, "错误", "07_master_assets/aep_templates 文件夹不存在或没有 AEP 模板文件"
             )
-            self._refresh_tree()
+            return
+
+        # 无Episode模式的处理
+        if self.project_config.get("no_episode", False):
+            # 直接批量复制到所有Cut
+            cuts = self.project_config.get("cuts", [])
+            if not cuts:
+                QMessageBox.warning(self, "提示", "项目中还没有创建任何 Cut")
+                return
+
+            reply = QMessageBox.question(
+                self, "批量复制确认",
+                f"将为所有 {len(cuts)} 个 Cut 复制 AEP 模板，是否继续？",
+                QMessageBox.Yes | QMessageBox.No
+            )
+            if reply != QMessageBox.Yes:
+                return
+
+            self._batch_copy_no_episode()
+            return
+
+        # 有Episode模式，显示选择对话框
+        dialog = BatchAepDialog(self.project_config, self)
+        if dialog.exec() == QDialog.Accepted:
+            settings = dialog.get_settings()
+            self._batch_copy_with_settings(settings)
+
+
+    def _batch_copy_no_episode(self):
+        """无Episode模式的批量复制"""
+        cuts = self.project_config.get("cuts", [])
+        proj_name = self.project_base.name
+        if not cuts:
+            QMessageBox.warning(self, "错误", "没有可用的 Cut")
+            return
+
+        template_dir = self.project_base / "07_master_assets" / "aep_templates"
+        templates = list(template_dir.glob("*.aep"))
+
+        success_count = 0
+        skip_count = 0
+
+        for cut_id in cuts:
+            cut_path = self.project_base / "01_vfx" / cut_id
+            if not cut_path.exists():
+                continue
+
+            cut_copied = 0
+            for template in templates:
+                # 保留模板的原始文件名中的版本号或其他信息
+                template_stem = template.stem
+
+                # 构建新文件名
+                if '_v' in template_stem:
+                    version_part = template_stem[template_stem.rfind('_v'):]
+                    aep_name = f"{proj_name}_{cut_id}{version_part}{template.suffix}"
+                else:
+                    aep_name = f"{proj_name}_{cut_id}_v0{template.suffix}"
+
+                dst = cut_path / aep_name
+
+                if dst.exists():
+                    skip_count += 1
+                    continue
+
+                if copy_file_safe(template, dst):
+                    cut_copied += 1
+
+            if cut_copied > 0:
+                success_count += 1
+
+        message_lines = [f"✅ 成功为 {success_count} 个 Cut 复制了模板"]
+        if skip_count > 0:
+            message_lines.append(f"⏭️ 跳过了 {skip_count} 个已存在的文件")
+
+        message = "\n".join(message_lines)
+
+        QMessageBox.information(self, "批量复制完成", message)
+        self._refresh_tree()
+
+
+    def _batch_copy_with_settings(self, settings: Dict):
+        """根据设置批量复制"""
+        template_dir = self.project_base / "07_master_assets" / "aep_templates"
+        templates = list(template_dir.glob("*.aep"))
+        proj_name = self.project_base.name
+
+        # 确定要处理的Episode和Cut列表
+        target_episodes = []
+
+        if settings["scope"] == 0:  # 所有
+            target_episodes = list(self.project_config.get("episodes", {}).keys())
+        elif settings["scope"] >= 1:  # 指定Episode
+            target_episodes = [settings["episode"]]
+
+        success_count = 0
+        skip_count = 0
+        overwrite_count = 0
+
+        for ep_id in target_episodes:
+            cuts = self.project_config["episodes"][ep_id]
+
+            # 如果指定了Cut范围
+            if settings["scope"] == 2:
+                cut_from = settings["cut_from"]
+                cut_to = settings["cut_to"]
+                # 筛选在范围内的Cut
+                filtered_cuts = []
+                for cut in cuts:
+                    try:
+                        cut_num = int(cut)
+                        if cut_from <= cut_num <= cut_to:
+                            filtered_cuts.append(cut)
+                    except:
+                        continue
+                cuts = filtered_cuts
+
+            # 复制模板到每个Cut
+            for cut_id in cuts:
+                cut_path = self.project_base / ep_id / "01_vfx" / cut_id
+                if not cut_path.exists():
+                    continue
+
+                # 检查是否要跳过已有AEP的Cut
+                if settings["skip_existing"]:
+                    existing_aeps = list(cut_path.glob("*.aep"))
+                    if existing_aeps:
+                        skip_count += len(existing_aeps)
+                        continue
+
+                cut_copied = 0
+                for template in templates:
+                    # 保留模板的原始文件名中的版本号或其他信息
+                    template_stem = template.stem
+                    ep_part = ep_id.upper()
+
+                    # 构建新文件名
+                    if '_v' in template_stem:
+                        version_part = template_stem[template_stem.rfind('_v'):]
+                        aep_name = f"{proj_name}_{ep_part}_{cut_id}{version_part}{template.suffix}"
+                    else:
+                        aep_name = f"{proj_name}_{ep_part}_{cut_id}_v0{template.suffix}"
+
+                    dst = cut_path / aep_name
+
+                    if dst.exists():
+                        if settings["overwrite"]:
+                            overwrite_count += 1
+                        else:
+                            skip_count += 1
+                            continue
+
+                    if copy_file_safe(template, dst):
+                        cut_copied += 1
+
+                if cut_copied > 0:
+                    success_count += 1
+
+        # 显示结果
+        message_lines = [f"✅ 成功为 {success_count} 个 Cut 复制了模板"]
+        if overwrite_count > 0:
+            message_lines.append(f"🔄 覆盖了 {overwrite_count} 个文件")
+        if skip_count > 0:
+            message_lines.append(f"⏭️ 跳过了 {skip_count} 个文件")
+
+        message = "\n".join(message_lines)
+
+        QMessageBox.information(self, "批量复制完成", message)
+        self._refresh_tree()
+
 
     # ========================== UI 更新 ========================== #
 
@@ -1690,6 +2362,7 @@ _统计信息将在创建 Episode 和 Cut 后自动更新_
             self.btn_new_project.setEnabled(True)
             self.btn_open_project.setEnabled(True)
 
+
     def _on_episode_type_changed(self, episode_type: str):
         """Episode 类型变化时的处理"""
         # 根据类型调整输入提示和批量创建的可用性
@@ -1707,6 +2380,7 @@ _统计信息将在创建 Episode 和 Cut 后自动更新_
             self.spin_ep_from.setEnabled(False)
             self.spin_ep_to.setEnabled(False)
 
+
     def _on_episode_changed(self, episode: str):
         """Episode 选择变化时更新 Cut 列表"""
         self.cmb_target_cut.clear()
@@ -1719,6 +2393,7 @@ _统计信息将在创建 Episode 和 Cut 后自动更新_
         cuts = self.project_config.get("episodes", {}).get(episode, [])
         if cuts:
             self.cmb_target_cut.addItems(sorted(cuts))
+
 
     def _toggle_episode_mode(self, state: int):
         """切换 Episode 模式"""
@@ -1739,6 +2414,7 @@ _统计信息将在创建 Episode 和 Cut 后自动更新_
             self._save_project_config()
             self._update_import_combos()
             self._update_cut_episode_combo()
+
 
     def _enable_controls(self, enabled: bool):
         """启用/禁用控件"""
@@ -1768,6 +2444,7 @@ _统计信息将在创建 Episode 和 Cut 后自动更新_
             self.btn_import_single,
             self.btn_import_all,
             self.btn_copy_aep,
+            self.btn_batch_copy_aep,
             self.cmb_target_episode,
             self.cmb_target_cut,
             self.txt_bg_path,
@@ -1782,6 +2459,7 @@ _统计信息将在创建 Episode 和 Cut 后自动更新_
         # 如果启用且不是标准 ep 类型，调整批量创建的可用性
         if enabled and hasattr(self, 'cmb_episode_type'):
             self._on_episode_type_changed(self.cmb_episode_type.currentText())
+
 
     def _refresh_tree(self):
         """刷新目录树"""
@@ -1820,6 +2498,7 @@ _统计信息将在创建 Episode 和 Cut 后自动更新_
         # 展开到适当深度
         self.tree.expandToDepth(2)
 
+
     def _update_import_combos(self):
         """更新导入面板的下拉列表"""
         self.cmb_target_episode.clear()
@@ -1841,6 +2520,7 @@ _统计信息将在创建 Episode 和 Cut 后自动更新_
                 # 重要：设置为未选择状态（-1表示没有选中任何项）
                 self.cmb_target_episode.setCurrentIndex(-1)
                 # Cut 列表保持空白，等待用户选择 Episode
+
 
     def _update_project_stats(self):
         """更新项目统计信息"""
@@ -1887,6 +2567,7 @@ _统计信息将在创建 Episode 和 Cut 后自动更新_
         # 同时更新 README
         self._update_readme_stats()
 
+
     def _update_browser_tree(self):
         """更新浏览器的Episode/Cut树"""
         self.browser_tree.clear()
@@ -1922,6 +2603,7 @@ _统计信息将在创建 Episode 和 Cut 后自动更新_
         if self.txt_cut_search and self.txt_cut_search.text().strip():
             self._on_cut_search_changed(self.txt_cut_search.text())
 
+
     def _on_browser_tree_clicked(self, item: QTreeWidgetItem):
         """处理浏览器树的点击事件"""
         data = item.data(0, Qt.UserRole)
@@ -1946,9 +2628,11 @@ _统计信息将在创建 Episode 和 Cut 后自动更新_
             if self.current_episode_id:
                 self.lbl_current_cut.setText(f"当前位置：{self.current_episode_id} (请选择具体的 Cut)")
 
+
     def _on_file_tab_changed(self, index: int):
         """处理文件Tab切换"""
         self._update_current_path_label()
+
 
     def _update_current_path_label(self):
         """更新当前路径标签"""
@@ -2009,6 +2693,7 @@ _统计信息将在创建 Episode 和 Cut 后自动更新_
         self.lbl_current_cut.setText(f"📁 {tab_name}: {display_path}")
         self.lbl_current_cut.setToolTip(path_str)  # 完整路径作为工具提示
 
+
     def _show_path_context_menu(self, position):
         """显示路径标签的右键菜单"""
         if not self.current_path:
@@ -2029,6 +2714,7 @@ _统计信息将在创建 Episode 和 Cut 后自动更新_
         # 显示菜单
         menu.exec_(self.lbl_current_cut.mapToGlobal(position))
 
+
     def _open_path_in_explorer(self, path: Path):
         """在文件管理器中打开路径"""
         if not path or not path.exists():
@@ -2044,6 +2730,7 @@ _统计信息将在创建 Episode 和 Cut 后自动更新_
                 subprocess.run(["xdg-open", str(path)])
         except Exception as e:
             print(f"打开文件管理器失败: {e}")
+
 
     def _load_cut_files(self, cut_id: str, episode_id: Optional[str] = None):
         """加载指定Cut的文件列表"""
@@ -2194,6 +2881,7 @@ _统计信息将在创建 Episode 和 Cut 后自动更新_
         else:
             self.file_tabs.setTabText(4, "3DCG")
 
+
     def _clear_file_lists(self):
         """清空所有文件列表"""
         self.vfx_list.clear()
@@ -2208,6 +2896,7 @@ _统计信息将在创建 Episode 和 Cut 后自动更新_
         self.file_tabs.setTabText(2, "BG")
         self.file_tabs.setTabText(3, "Render")
         self.file_tabs.setTabText(4, "3DCG")
+
 
     def _open_file_location(self, item: QListWidgetItem):
         """在文件管理器中打开文件位置"""
@@ -2241,6 +2930,7 @@ _统计信息将在创建 Episode 和 Cut 后自动更新_
                     subprocess.run(["xdg-open", str(path)])
         except Exception as e:
             print(f"打开文件位置失败: {e}")
+
 
     def _update_readme_stats(self):
         """更新README中的统计信息"""
@@ -2304,6 +2994,7 @@ _统计信息将在创建 Episode 和 Cut 后自动更新_
         except Exception as e:
             print(f"更新README统计失败: {e}")
 
+
     def _update_cut_episode_combo(self):
         """更新Cut管理中的Episode下拉列表"""
         self.cmb_cut_episode.clear()
@@ -2341,11 +3032,13 @@ _统计信息将在创建 Episode 和 Cut 后自动更新_
         if last_project and Path(last_project).exists():
             self._load_project(last_project)
 
+
     def _save_app_settings(self):
         """保存软件设置"""
         self.app_settings.setValue("window_geometry", self.saveGeometry())
         if self.project_base:
             self.app_settings.setValue("last_project", str(self.project_base))
+
 
     def set_default_path(self):
         """设置默认项目路径"""
@@ -2363,6 +3056,7 @@ _统计信息将在创建 Episode 和 Cut 后自动更新_
             QMessageBox.information(
                 self, "成功", f"默认项目路径已设置为:\n{folder}"
             )
+
 
     def _update_recent_menu(self):
         """更新最近项目菜单"""
@@ -2382,6 +3076,7 @@ _统计信息将在创建 Episode 和 Cut 后自动更新_
                     lambda checked, p=path: self.open_recent_project(p)
                 )
 
+
     def _add_to_recent(self, path: str):
         """添加到最近项目"""
         recent = self.app_settings.value("recent_projects", [])
@@ -2399,6 +3094,7 @@ _统计信息将在创建 Episode 和 Cut 后自动更新_
         self.app_settings.setValue("recent_projects", recent)
         self._update_recent_menu()
 
+
     def _remove_from_recent(self, path: str):
         """从最近项目中移除"""
         recent = self.app_settings.value("recent_projects", [])
@@ -2406,6 +3102,7 @@ _统计信息将在创建 Episode 和 Cut 后自动更新_
             recent.remove(path)
             self.app_settings.setValue("recent_projects", recent)
             self._update_recent_menu()
+
 
     # ========================== 其他功能 ========================== #
 
@@ -2424,6 +3121,7 @@ _统计信息将在创建 Episode 和 Cut 后自动更新_
                 subprocess.run(["xdg-open", str(self.project_base)])
         except Exception as e:
             print(f"打开文件管理器失败: {e}")
+
 
     def _on_cut_search_changed(self, text: str):
         """处理Cut搜索框内容变化"""
@@ -2495,6 +3193,7 @@ _统计信息将在创建 Episode 和 Cut 后自动更新_
         else:
             self.browser_tree.setHeaderLabel("没有找到匹配的Cut")
 
+
     def _select_first_match(self):
         """选择第一个匹配的Cut"""
 
@@ -2517,10 +3216,12 @@ _统计信息将在创建 Episode 和 Cut 后自动更新_
                 self._on_browser_tree_clicked(result)
                 break
 
+
     def _clear_cut_search(self):
         """清除Cut搜索"""
         self.txt_cut_search.clear()
         self._show_all_tree_items()
+
 
     def _show_all_tree_items(self):
         """显示所有树项目"""
@@ -2541,6 +3242,7 @@ _统计信息将在创建 Episode 和 Cut 后自动更新_
         # 恢复原始标题
         self.browser_tree.setHeaderLabel("选择要浏览的 Cut")
 
+
     def _focus_cut_search(self):
         """聚焦到Cut搜索框"""
         if self.txt_cut_search:
@@ -2549,6 +3251,7 @@ _统计信息将在创建 Episode 和 Cut 后自动更新_
             # 聚焦到搜索框
             self.txt_cut_search.setFocus()
             self.txt_cut_search.selectAll()
+
 
     def closeEvent(self, event):
         """窗口关闭事件"""
@@ -2559,7 +3262,7 @@ _统计信息将在创建 Episode 和 Cut 后自动更新_
 # ================================ 导出的组件 ================================ #
 # 这些组件可以在其他程序中导入使用
 
-__all__ = ['ProjectBrowser', 'CXProjectManager', 'SearchLineEdit']
+__all__ = ['ProjectBrowser', 'CXProjectManager', 'SearchLineEdit', 'BatchAepDialog']
 
 
 # ================================ 主程序入口 ================================ #
