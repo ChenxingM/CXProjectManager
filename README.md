@@ -30,7 +30,7 @@
 
 ```bash
 # 1. 安装依赖
-pip install pyside6
+pip install -r requirements.txt
 
 # 2. 运行
 python cx_project_manager.py
