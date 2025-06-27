@@ -23,7 +23,7 @@ from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 
 from PySide6.QtCore import Qt, QSettings, Signal
-from PySide6.QtGui import QAction, QFont, QIcon
+from PySide6.QtGui import QAction, QFont, QIcon, QBrush, QColor
 from PySide6.QtWidgets import (
     QApplication, QCheckBox, QComboBox, QFileDialog, QGroupBox,
     QHBoxLayout, QLabel, QLineEdit, QMainWindow, QMenu, QMenuBar,
@@ -74,7 +74,7 @@ QLineEdit, QSpinBox, QComboBox {
     border: 1px solid #3C3C3C;
     border-radius: 4px;
     padding: 4px 6px;
-    min-height: 22px;
+    min-height: 24px;
 }
 
 QLineEdit:focus, QSpinBox:focus, QComboBox:focus {
@@ -244,9 +244,7 @@ class ProjectBrowser(QWidget):
 
         splitter.addWidget(self.tree)
         splitter.addWidget(self.file_list)
-
         layout.addWidget(splitter)
-
 
     def load_project(self, project_path: str):
         """加载项目"""
@@ -319,6 +317,8 @@ class CXProjectManager(QMainWindow):
         self.current_cut_id = None  # 当前选中的Cut ID
         self.current_episode_id = None  # 当前选中的Episode ID
         self.current_path = None  # 当前显示的路径
+        self.txt_cut_search = None  # Cut搜索框
+        self.btn_clear_search = None  # 清除搜索按钮
 
         # 设置 UI
         self._setup_ui()
@@ -657,9 +657,25 @@ class CXProjectManager(QMainWindow):
         stats_layout.addWidget(self.txt_project_stats)
         left_layout.addWidget(stats_group)
 
-        # Episode/Cut 树组
-        tree_group = QGroupBox("📂 Episode / Cut 结构")
+        # Cut 树组
+        tree_group = QGroupBox("📂 Cut")
         tree_layout = QVBoxLayout(tree_group)
+
+        # Cut 搜索框
+        search_layout = QHBoxLayout()
+        self.txt_cut_search = QLineEdit()
+        self.txt_cut_search.setPlaceholderText("搜索 Cut (支持数字快速定位)...")
+        self.txt_cut_search.textChanged.connect(self._on_cut_search_changed)
+        self.txt_cut_search.setClearButtonEnabled(True)  # 添加内置清除按钮
+        self.txt_cut_search.returnPressed.connect(self._select_first_match)  # 回车选择第一个匹配
+        self.txt_cut_search.setToolTip("输入Cut名称或数字进行搜索，按回车选择第一个匹配项")
+        self.btn_clear_search = QPushButton("清除")
+        self.btn_clear_search.clicked.connect(self._clear_cut_search)
+        self.btn_clear_search.setMaximumWidth(60)
+        search_layout.addWidget(QLabel("🔍"))
+        search_layout.addWidget(self.txt_cut_search)
+        search_layout.addWidget(self.btn_clear_search)
+        tree_layout.addLayout(search_layout)
 
         self.browser_tree = QTreeWidget()
         self.browser_tree.setHeaderLabel("选择要浏览的 Cut")
@@ -731,8 +747,8 @@ class CXProjectManager(QMainWindow):
         # 添加到主分割器
         main_splitter.addWidget(left_panel)
         main_splitter.addWidget(right_panel)
-        main_splitter.setStretchFactor(0, 2)  # 左侧占2份
-        main_splitter.setStretchFactor(1, 3)  # 右侧占3份
+        main_splitter.setStretchFactor(0, 1)  # 左侧占1份
+        main_splitter.setStretchFactor(1, 3)  # 右侧占2份
 
         layout.addWidget(main_splitter)
 
@@ -781,6 +797,11 @@ class CXProjectManager(QMainWindow):
         act_refresh.setShortcut("F5")
         act_refresh.triggered.connect(self._refresh_tree)
         tools_menu.addAction(act_refresh)
+
+        act_search_cut = QAction("搜索Cut", self)
+        act_search_cut.setShortcut("Ctrl+F")
+        act_search_cut.triggered.connect(self._focus_cut_search)
+        tools_menu.addAction(act_search_cut)
 
         act_open_folder = QAction("在文件管理器中打开", self)
         act_open_folder.triggered.connect(self.open_in_explorer)
@@ -1611,6 +1632,10 @@ _统计信息将在创建 Episode 和 Cut 后自动更新_
             self.current_episode_id = None
             self.current_path = None
 
+            # 清除搜索
+            if self.txt_cut_search:
+                self.txt_cut_search.clear()
+
             # 启用控件
             self._enable_controls(True)
 
@@ -1633,6 +1658,8 @@ _统计信息将在创建 Episode 和 Cut 后自动更新_
             self.current_cut_id = None
             self.current_episode_id = None
             self.current_path = None
+            if self.txt_cut_search:
+                self.txt_cut_search.clear()
 
     def _on_episode_type_changed(self, episode_type: str):
         """Episode 类型变化时的处理"""
@@ -1866,6 +1893,10 @@ _统计信息将在创建 Episode 和 Cut 后自动更新_
 
                 # 展开 Episode 节点
                 ep_item.setExpanded(True)
+
+        # 如果搜索框有内容，重新应用搜索
+        if self.txt_cut_search and self.txt_cut_search.text().strip():
+            self._on_cut_search_changed(self.txt_cut_search.text())
 
     def _on_browser_tree_clicked(self, item: QTreeWidgetItem):
         """处理浏览器树的点击事件"""
@@ -2353,6 +2384,131 @@ _统计信息将在创建 Episode 和 Cut 后自动更新_
                 subprocess.run(["xdg-open", str(self.project_base)])
         except Exception as e:
             print(f"打开文件管理器失败: {e}")
+
+    def _on_cut_search_changed(self, text: str):
+        """处理Cut搜索框内容变化"""
+        search_text = text.strip().lower()
+
+        if not search_text:
+            # 如果搜索框为空，显示所有项目并重置颜色
+            self._show_all_tree_items()
+            self.browser_tree.setHeaderLabel("选择要浏览的 Cut")
+            return
+
+        match_count = 0
+        first_match = None
+
+        # 递归搜索并显示匹配的项目
+        def search_items(item: QTreeWidgetItem):
+            """递归搜索树项目"""
+            nonlocal match_count, first_match
+            item_text = item.text(0).lower()
+
+            # 智能匹配
+            has_match = False
+            if search_text in item_text:
+                has_match = True
+            elif search_text.isdigit():
+                # 如果搜索的是数字，进行智能匹配
+                # 例如搜索"1"可以匹配"001", "010", "100"等
+                if search_text in item.text(0):
+                    has_match = True
+
+            has_child_match = False
+
+            # 检查子项
+            for i in range(item.childCount()):
+                child = item.child(i)
+                if search_items(child):
+                    has_child_match = True
+
+            # 如果自身匹配或有子项匹配，则显示
+            should_show = has_match or has_child_match
+            item.setHidden(not should_show)
+
+            # 高亮显示匹配的项目
+            if has_match and item.childCount() == 0:
+                # 设置匹配项的前景色为高亮色
+                item.setForeground(0, QBrush(QColor("#4CAF50")))  # 绿色高亮
+                item.setFont(0, QFont("", -1, QFont.Bold))  # 加粗
+                match_count += 1
+                if first_match is None:
+                    first_match = item
+            else:
+                # 重置非匹配项的样式
+                item.setForeground(0, QBrush())
+                item.setFont(0, QFont())
+
+            # 如果有子项匹配，展开该项
+            if has_child_match:
+                item.setExpanded(True)
+
+            return should_show
+
+        # 对所有顶级项目进行搜索
+        for i in range(self.browser_tree.topLevelItemCount()):
+            search_items(self.browser_tree.topLevelItem(i))
+
+        # 更新标题显示搜索结果数
+        if match_count > 0:
+            self.browser_tree.setHeaderLabel(f"搜索结果: {match_count} 个Cut")
+        else:
+            self.browser_tree.setHeaderLabel("没有找到匹配的Cut")
+
+    def _select_first_match(self):
+        """选择第一个匹配的Cut"""
+
+        # 查找第一个可见的叶子节点
+        def find_first_visible_leaf(item: QTreeWidgetItem):
+            if not item.isHidden():
+                if item.childCount() == 0:
+                    return item
+                for i in range(item.childCount()):
+                    result = find_first_visible_leaf(item.child(i))
+                    if result:
+                        return result
+            return None
+
+        # 搜索所有顶级项目
+        for i in range(self.browser_tree.topLevelItemCount()):
+            result = find_first_visible_leaf(self.browser_tree.topLevelItem(i))
+            if result:
+                self.browser_tree.setCurrentItem(result)
+                self._on_browser_tree_clicked(result)
+                break
+
+    def _clear_cut_search(self):
+        """清除Cut搜索"""
+        self.txt_cut_search.clear()
+        self._show_all_tree_items()
+
+    def _show_all_tree_items(self):
+        """显示所有树项目"""
+
+        def show_items(item: QTreeWidgetItem):
+            """递归显示所有项目"""
+            item.setHidden(False)
+            # 重置样式
+            item.setForeground(0, QBrush())
+            item.setFont(0, QFont())
+            for i in range(item.childCount()):
+                show_items(item.child(i))
+
+        # 显示所有顶级项目
+        for i in range(self.browser_tree.topLevelItemCount()):
+            show_items(self.browser_tree.topLevelItem(i))
+
+        # 恢复原始标题
+        self.browser_tree.setHeaderLabel("选择要浏览的 Cut")
+
+    def _focus_cut_search(self):
+        """聚焦到Cut搜索框"""
+        if self.txt_cut_search:
+            # 切换到项目浏览Tab
+            self.tabs.setCurrentIndex(1)
+            # 聚焦到搜索框
+            self.txt_cut_search.setFocus()
+            self.txt_cut_search.selectAll()
 
     def closeEvent(self, event):
         """窗口关闭事件"""
