@@ -1570,7 +1570,7 @@ class CXProjectManager(QMainWindow):
         main_splitter.addWidget(left_panel)
         main_splitter.addWidget(right_panel)
         main_splitter.setStretchFactor(0, 1)
-        main_splitter.setStretchFactor(1, 2)
+        main_splitter.setStretchFactor(1, 3)
 
         layout.addWidget(main_splitter)
 
@@ -3153,7 +3153,7 @@ class CXProjectManager(QMainWindow):
             # 高亮显示匹配的项目
             if has_match and item.childCount() == 0:
                 item.setForeground(0, QBrush(QColor("#4CAF50")))
-                item.setFont(0, QFont("", -1, QFont.Bold))
+                item.setFont(0, QFont("MiSans", -1, QFont.Bold))
                 match_count += 1
                 if first_match is None:
                     first_match = item
@@ -3288,6 +3288,7 @@ class CXProjectManager(QMainWindow):
         for path in recent_projects[:10]:
             if Path(path).exists():
                 action = self.recent_menu.addAction(Path(path).name)
+                action.setShortcut("Ctrl+R")
                 action.setToolTip(path)
                 action.triggered.connect(
                     lambda checked, p=path: self.open_recent_project(p)

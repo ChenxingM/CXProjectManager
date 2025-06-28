@@ -115,11 +115,11 @@ QTabBar::tab {
     min-width: 60px;
 }
 
-QTabBar::tab:first {
+QTabBar::tab {
     border-top-left-radius: 4px;
 }
 
-QTabBar::tab:last {
+QTabBar::tab {
     border-top-right-radius: 4px;
 }
 
