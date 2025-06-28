@@ -12,10 +12,12 @@ CX Project Manager - 动画项目管理工具（优化版）
 • 软件配置记忆（默认路径、最近项目）
 • 目录树可视化
 • Cut 搜索功能
+• 版本管理系统
+• 文件预览和时间显示
 • 深色主题 UI
 
 Author: 千石まよひ
-Version: 0.0.2
+Version: 2.1
 GitHub: https://github.com/ChenxingM/CXProjectManager
 """
 
@@ -25,22 +27,56 @@ import sys
 import os
 import subprocess
 import platform
+import re
 from datetime import datetime
 from pathlib import Path
-from typing import Dict, List, Optional, Tuple, Set
+from typing import Dict, List, Optional, Tuple, Set, Union
 from dataclasses import dataclass, field
 from enum import Enum
 
-from PySide6.QtCore import Qt, QSettings, Signal
-from PySide6.QtGui import QAction, QFont, QIcon, QBrush, QColor
+from PySide6.QtCore import Qt, QSettings, Signal, QSize, QTimer, QRect, QDateTime, QPoint
+from PySide6.QtGui import (
+    QAction, QFont, QIcon, QBrush, QColor, QPixmap, QPainter,
+    QPen, QFontMetrics, QPalette
+)
 from PySide6.QtWidgets import (
     QApplication, QCheckBox, QComboBox, QFileDialog, QGroupBox,
     QHBoxLayout, QLabel, QLineEdit, QMainWindow, QMenu, QMenuBar,
     QMessageBox, QPushButton, QSpinBox, QSplitter, QStatusBar,
     QTreeWidget, QTreeWidgetItem, QVBoxLayout, QWidget, QTabWidget,
     QTextEdit, QListWidget, QListWidgetItem, QDialog, QDialogButtonBox,
-    QRadioButton, QButtonGroup
+    QRadioButton, QButtonGroup, QListView, QAbstractItemView,
+    QStyledItemDelegate, QStyle, QStyleOptionViewItem
 )
+
+# 导入样式表
+from _utils._qss import QSS_THEME
+
+# 导入版本信息
+from _utils._version_info import version_info
+
+# ================================ 常量定义 ================================ #
+
+# 图片文件扩展名 - 添加了.tga支持
+IMAGE_EXTENSIONS = {'.png', '.jpg', '.jpeg', '.psd', '.tiff', '.bmp', '.gif', '.tga', '.exr', '.dpx'}
+
+# 视频文件扩展名
+VIDEO_EXTENSIONS = {'.mp4', '.mov', '.avi', '.mkv', '.flv', '.wmv', '.webm'}
+
+# 3D文件扩展名
+THREED_EXTENSIONS = {
+    '.ma', '.mb',  # Maya
+    '.max', '.3ds',  # 3ds Max
+    '.blend',  # Blender
+    '.c4d',  # Cinema 4D
+    '.fbx', '.obj', '.dae',  # 通用格式
+    '.abc',  # Alembic
+    '.usd', '.usda', '.usdc',  # USD
+    '.pld'  # 特殊格式
+}
+
+# 版本号正则表达式
+VERSION_PATTERN = re.compile(r'_[TVtv](\d+)(?:\.\w+)?$')
 
 
 # ================================ 枚举和数据类 ================================ #
@@ -93,404 +129,37 @@ class MaterialType:
     AEP = "aep"
 
 
-# ================================ 样式表 ================================ #
-
-QSS_THEME = """
-/* 全局样式 */
-* {
-    color: #E0E0E0;
-    font-family: "MiSans", "微软雅黑", "Segoe UI", Arial;
-    font-size: 13px;
-}
-
-QMainWindow, QWidget {
-    background-color: #1E1E1E;
-}
-
-/* 按钮样式 */
-QPushButton {
-    background-color: #2D2D2D;
-    border: 1px solid #3C3C3C;
-    border-radius: 4px;
-    padding: 5px 12px;
-    min-height: 24px;
-}
-
-QPushButton:hover {
-    background-color: #3A3A3A;
-    border-color: #4A4A4A;
-}
-
-QPushButton:pressed {
-    background-color: #252525;
-}
-
-QPushButton:disabled {
-    color: #666666;
-    background-color: #242424;
-}
-
-/* 输入框样式 */
-QLineEdit, QSpinBox, QComboBox {
-    background-color: #262626;
-    border: 1px solid #3C3C3C;
-    border-radius: 4px;
-    padding: 4px 6px;
-    min-height: 24px;
-    height: 24px;
-}
-
-QLineEdit:focus, QSpinBox:focus, QComboBox:focus {
-    border-color: #03A9F4;
-    background-color: #2A2A2A;
-}
-
-/* 标签样式 */
-QLabel {
-    padding: 2px;
-}
-
-/* 分组框样式 */
-QGroupBox {
-    border: 1px solid #3C3C3C;
-    border-radius: 4px;
-    margin-top: 8px;
-    padding-top: 8px;
-}
-
-QGroupBox::title {
-    subcontrol-origin: margin;
-    left: 8px;
-    padding: 0 4px;
-}
-
-/* 列表控件样式 */
-QListWidget {
-    background-color: #262626;
-    border: 1px solid #3C3C3C;
-    border-radius: 4px;
-    outline: none;
-    alternate-background-color: #2F2F2F;  /* 隔行背景色 - 调亮一点 */
-}
-
-QListWidget::item {
-    padding: 4px 8px;
-    background-color: transparent;
-}
-
-QListWidget::item:alternate {
-    background-color: #2F2F2F;  /* 偶数行背景色 */
-}
-
-QListWidget::item:hover {
-    background-color: #3A3A3A !important;  /* 确保悬停效果优先 */
-}
-
-QListWidget::item:selected {
-    background-color: #03A9F4 !important;  /* 确保选中效果优先 */
-}
-
-/* Tab控件样式 */
-QTabWidget::pane {
-    background-color: #262626;
-    border: 1px solid #3C3C3C;
-    border-radius: 4px;
-    top: -1px;
-}
-
-QTabWidget::tab-bar {
-    left: 0px;
-}
-
-QTabBar::tab {
-    background-color: #2D2D2D;
-    color: #B0B0B0;
-    border: 1px solid #3C3C3C;
-    border-bottom: none;
-    padding: 6px 16px;
-    margin-right: 2px;
-    min-width: 60px;
-}
-
-QTabBar::tab:first {
-    border-top-left-radius: 4px;
-}
-
-QTabBar::tab:last {
-    border-top-right-radius: 4px;
-}
-
-QTabBar::tab:hover {
-    background-color: #3A3A3A;
-    color: #E0E0E0;
-}
-
-QTabBar::tab:selected {
-    background-color: #03A9F4;
-    color: #FFFFFF;
-    font-weight: bold;
-    border-color: #03A9F4;
-}
-
-QTabBar::tab:!selected {
-    margin-top: 2px;
-}
-
-/* 菜单样式 */
-QMenuBar {
-    background-color: #2D2D2D;
-    border-bottom: 1px solid #3C3C3C;
-}
-
-QMenuBar::item:selected {
-    background-color: #3A3A3A;
-}
-
-QMenu {
-    background-color: #2D2D2D;
-    border: 1px solid #3C3C3C;
-}
-
-QMenu::item:selected {
-    background-color: #03A9F4;
-}
-
-/* 状态栏样式 */
-QStatusBar {
-    background-color: #252525;
-    border-top: 1px solid #3C3C3C;
-}
-
-/* 复选框样式 */
-QCheckBox {
-    spacing: 10px;
-}
-
-QCheckBox::indicator {
-    width: 20px;
-    height: 20px;
-    border: 1px solid #3C3C3C;
-    border-radius: 3px;
-    background-color: #262626;
-}
-
-QCheckBox::indicator:checked {
-    background-color: #03A9F4;
-    border-color: #03A9F4;
-}
-
-QCheckBox::indicator:checked::after {
-    content: "";
-    position: absolute;
-    width: 6px;
-    height: 10px;
-    border: solid white;
-    border-width: 0 2px 2px 0;
-    transform: rotate(45deg);
-    top: 2px;
-    left: 5px;
-}
-
-/* 分割器样式 */
-QSplitter::handle {
-    background-color: #2D2D2D;
-}
-
-QSplitter::handle:horizontal {
-    width: 4px;
-}
-
-QSplitter::handle:vertical {
-    height: 4px;
-}
-
-QSplitter::handle:hover {
-    background-color: #03A9F4;
-}
-
-/* 树控件样式 */
-QTreeWidget {
-    background-color: #262626;
-    border: 1px solid #3C3C3C;
-    border-radius: 4px;
-    outline: none;
-    alternate-background-color: #2F2F2F;  /* 隔行背景色 - 调亮一点 */
-}
-
-QTreeWidget::item {
-    padding: 4px;
-    background-color: transparent;
-}
-
-QTreeWidget::item:alternate {
-    background-color: #2F2F2F;  /* 偶数行背景色 */
-}
-
-QTreeWidget::item:hover {
-    background-color: #3A3A3A !important;  /* 确保悬停效果优先 */
-}
-
-QTreeWidget::item:selected {
-    background-color: #03A9F4 !important;  /* 确保选中效果优先 */
-}
-
-/* 树控件展开/折叠箭头 - 16x16像素 */
-QTreeWidget::branch:has-children:closed {
-    image: url(_imgs/tree_arrow_closed.png);
-}
-
-QTreeWidget::branch:has-children:open {
-    image: url(_imgs/tree_arrow_open.png);
-}
-
-QTreeWidget::branch:has-children:closed:hover {
-    image: url(_imgs/tree_arrow_closed_hover.png);
-}
-
-QTreeWidget::branch:has-children:open:hover {
-    image: url(_imgs/tree_arrow_open_hover.png);
-}
-
-/* 树控件标题栏样式 */
-QHeaderView::section {
-    background: #3C3C3C;
-    border: none;
-    padding: 4px 8px;
-    font-weight: bold;
-    color: #B0B0B0;
-}
-
-QHeaderView::section:hover {
-    background: #4A4A4A;
-    color: #E0E0E0;
-}
-
-QHeaderView {
-    background: none;
-    border: none;
-}
-
-/* 文本编辑框样式 */
-QTextEdit {
-    background-color: #262626;
-    border: 1px solid #3C3C3C;
-    border-radius: 4px;
-}
-
-/* 滚动条样式 */
-QScrollBar:vertical {
-    background-color: #262626;
-    width: 12px;
-    border-radius: 6px;
-}
-
-QScrollBar::handle:vertical {
-    background-color: #3C3C3C;
-    min-height: 20px;
-    border-radius: 6px;
-}
-
-QScrollBar::handle:vertical:hover {
-    background-color: #4A4A4A;
-}
-
-QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {
-    height: 0px;
-}
-
-QScrollBar:horizontal {
-    background-color: #262626;
-    height: 12px;
-    border-radius: 6px;
-}
-
-QScrollBar::handle:horizontal {
-    background-color: #3C3C3C;
-    min-width: 20px;
-    border-radius: 6px;
-}
-
-QScrollBar::handle:horizontal:hover {
-    background-color: #4A4A4A;
-}
-
-QScrollBar::add-line:horizontal, QScrollBar::sub-line:horizontal {
-    width: 0px;
-}
-
-/* SpinBox按钮样式 */
-QSpinBox::up-button, QSpinBox::down-button {
-    background-color: #2D2D2D;
-    border: 1px solid #3C3C3C;
-    width: 16px;
-}
-
-QSpinBox::up-button:hover, QSpinBox::down-button:hover {
-    background-color: #03A9F4;
-}
-
-/* SpinBox箭头 - 12x12像素 */
-QSpinBox::up-arrow {
-    image: url(_imgs/spinbox_arrow_up.png);
-    width: 8px;
-    height: 8px;
-}
-
-QSpinBox::down-arrow {
-    image: url(_imgs/spinbox_arrow_down.png);
-    width: 8px;
-    height: 8px;
-}
-
-QSpinBox::up-arrow:hover {
-    image: url(_imgs/spinbox_arrow_up_hover.png);
-}
-
-QSpinBox::down-arrow:hover {
-    image: url(_imgs/spinbox_arrow_down_hover.png);
-}
-
-QSpinBox::up-arrow:disabled {
-    image: url(_imgs/spinbox_up_arrow_disabled.png);
-}
-
-QSpinBox::down-arrow:disabled {
-    image: url(_imgs/spinbox_down_arrow_disabled.png);
-}
-
-/* ComboBox下拉按钮样式 */
-QComboBox::drop-down {
-    border: none;
-    width: 20px;
-    background-color: transparent;
-}
-
-/* ComboBox箭头 - 12x12像素 */
-QComboBox::down-arrow {
-    image: url(_imgs/combobox_arrow_down.png);
-    width: 8px;
-    height: 8px;
-}
-
-QComboBox::down-arrow:hover {
-    image: url(_imgs/combobox_arrow_down_hover.png);
-}
-
-QComboBox::down-arrow:on {
-    image: url(_imgs/combobox_arrow_up.png);  /* 展开时显示向上箭头 */
-}
-
-QComboBox::down-arrow:disabled {
-    image: url(_imgs/combobox_arrow_disabled.png);
-}
-
-QComboBox QAbstractItemView {
-    background-color: #2D2D2D;
-    border: 1px solid #3C3C3C;
-    selection-background-color: #03A9F4;
-    outline: none;
-}
-"""
+@dataclass
+class FileInfo:
+    """文件信息"""
+    path: Path
+    name: str
+    version: Optional[int] = None
+    modified_time: datetime = field(default_factory=datetime.now)
+    size: int = 0
+    is_folder: bool = False
+    is_aep: bool = False  # 添加AEP标识
+    is_png_seq: bool = False  # PNG序列标识
+    first_png: Optional[Path] = None  # PNG序列第一张
+    is_no_render: bool = False  # 未渲染标识
+
+    @property
+    def version_str(self) -> str:
+        """获取版本字符串"""
+        if self.version is not None:
+            # AEP文件的特殊版本显示
+            if self.is_aep:
+                if self.version == 0:
+                    return "T摄"
+                else:
+                    return f"本摄V{self.version}"
+            # 其他文件的正常版本显示
+            else:
+                if "V" in self.name or "v" in self.name:
+                    return f"V{self.version}"
+                elif "T" in self.name or "t" in self.name:
+                    return f"T{self.version}"
+        return ""  # 返回空字符串表示没有版本号
 
 
 # ================================ 工具函数 ================================ #
@@ -566,6 +235,92 @@ def open_in_file_manager(path: Path) -> None:
         print(f"打开文件管理器失败: {e}")
 
 
+def extract_version_from_filename(filename: str) -> Optional[int]:
+    """从文件名中提取版本号
+
+    Args:
+        filename: 文件名
+
+    Returns:
+        Optional[int]: 版本号，如果没有则返回None
+    """
+    # 特殊处理_v0的情况
+    if "_v0" in filename.lower():
+        return 0
+
+    match = VERSION_PATTERN.search(filename)
+    if match:
+        return int(match.group(1))
+    return None
+
+
+def format_file_size(size: int) -> str:
+    """格式化文件大小
+
+    Args:
+        size: 文件大小（字节）
+
+    Returns:
+        str: 格式化后的字符串
+    """
+    for unit in ['B', 'KB', 'MB', 'GB']:
+        if size < 1024.0:
+            return f"{size:.1f} {unit}"
+        size /= 1024.0
+    return f"{size:.1f} TB"
+
+
+def get_file_info(path: Path) -> FileInfo:
+    """获取文件信息
+
+    Args:
+        path: 文件路径
+
+    Returns:
+        FileInfo: 文件信息对象
+    """
+    stat = path.stat()
+    is_aep = path.suffix.lower() == '.aep'
+
+    return FileInfo(
+        path=path,
+        name=path.name,
+        version=extract_version_from_filename(path.stem),
+        modified_time=datetime.fromtimestamp(stat.st_mtime),
+        size=stat.st_size if path.is_file() else 0,
+        is_folder=path.is_dir(),
+        is_aep=is_aep
+    )
+
+
+def get_png_seq_info(png_seq_path: Path) -> FileInfo:
+    """获取PNG序列文件夹信息
+
+    Args:
+        png_seq_path: PNG序列文件夹路径
+
+    Returns:
+        FileInfo: 包含PNG序列信息的文件信息对象
+    """
+    stat = png_seq_path.stat()
+
+    # 查找第一张PNG
+    first_png = None
+    png_files = sorted(png_seq_path.glob("*.png"))
+    if png_files:
+        first_png = png_files[0]
+
+    return FileInfo(
+        path=png_seq_path,
+        name=f"{png_seq_path.name} ({len(png_files)} frames)" if png_files else png_seq_path.name,
+        modified_time=datetime.fromtimestamp(stat.st_mtime),
+        size=0,
+        is_folder=True,
+        is_png_seq=True,
+        first_png=first_png
+    )
+
+
 # ================================ 自定义控件 ================================ #
 
 class SearchLineEdit(QLineEdit):
@@ -577,6 +332,349 @@ class SearchLineEdit(QLineEdit):
             self.clear()
         else:
             super().keyPressEvent(event)
+
+
+class VersionConfirmDialog(QDialog):
+    """版本确认对话框"""
+
+    def __init__(self, material_type: str, current_version: int, parent=None):
+        super().__init__(parent)
+        self.material_type = material_type
+        self.version = current_version
+        self.skip_confirmation = False
+
+        self.setWindowTitle("确认版本号")
+        self.setModal(True)
+        self.setStyleSheet(QSS_THEME)
+        self._setup_ui()
+
+    def _setup_ui(self):
+        """设置UI"""
+        layout = QVBoxLayout(self)
+
+        # 信息提示
+        info_text = f"检测到已存在的{self.material_type.upper()}文件，\n建议使用版本号: T{self.version}"
+        info_label = QLabel(info_text)
+        info_label.setStyleSheet("padding: 10px; font-size: 14px;")
+        layout.addWidget(info_label)
+
+        # 版本号输入
+        version_layout = QHBoxLayout()
+        version_layout.addWidget(QLabel("版本号:"))
+        self.spin_version = QSpinBox()
+        self.spin_version.setPrefix("T")
+        self.spin_version.setRange(1, 999)
+        self.spin_version.setValue(self.version)
+        self.spin_version.setMinimumWidth(100)
+        version_layout.addWidget(self.spin_version)
+        version_layout.addStretch()
+        layout.addLayout(version_layout)
+
+        # 不再询问选项
+        self.chk_skip = QCheckBox("不再询问，自动使用推荐的版本号")
+        layout.addWidget(self.chk_skip)
+
+        # 按钮
+        buttons = QDialogButtonBox(
+            QDialogButtonBox.Ok | QDialogButtonBox.Cancel
+        )
+        buttons.accepted.connect(self.accept)
+        buttons.rejected.connect(self.reject)
+        layout.addWidget(buttons)
+
+    def get_version(self) -> int:
+        """获取用户选择的版本号"""
+        return self.spin_version.value()
+
+    def should_skip_confirmation(self) -> bool:
+        """是否跳过后续确认"""
+        return self.chk_skip.isChecked()
+
+
+class FileItemDelegate(QStyledItemDelegate):
+    """文件列表项委托，用于自定义绘制"""
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.icon_size = 64
+        self.padding = 8
+        # 调整字体设置
+        self.version_font = QFont("MiSans", 20, QFont.Bold)  # 版本号字体稍微小一点
+        self.name_font = QFont("MiSans", 12, QFont.Bold)  # 文件名加大加粗
+        self.time_font = QFont("MiSans", 9)  # 时间字体弱化
+        self.size_font = QFont("MiSans", 9)  # 大小字体弱化
+
+    def paint(self, painter: QPainter, option: QStyleOptionViewItem, index):
+        """绘制列表项"""
+        painter.save()
+
+        # 获取数据
+        file_info = index.data(Qt.UserRole + 1)
+        if not file_info:
+            super().paint(painter, option, index)
+            painter.restore()
+            return
+
+        rect = option.rect
+
+        # 绘制选中背景
+        if option.state & QStyle.State_Selected:
+            painter.fillRect(rect, QColor("#0D7ACC"))  # 更深的蓝色
+        elif option.state & QStyle.State_MouseOver:
+            painter.fillRect(rect, QColor("#3A3A3A"))
+
+        # 绘制图标
+        icon = index.data(Qt.DecorationRole)
+        if icon:
+            icon_rect = QRect(
+                rect.left() + self.padding,
+                rect.top() + self.padding,
+                self.icon_size,
+                self.icon_size
+            )
+            icon.paint(painter, icon_rect)
+
+        # 文本区域
+        text_left = rect.left() + self.icon_size + self.padding * 2
+        text_width = rect.width() - self.icon_size - self.padding * 3
+
+        # 如果有版本号，留出空间
+        if file_info.version is not None:
+            text_width -= 80  # 为版本号留出更多空间
+
+        # 绘制文件名 - 加粗且更大
+        painter.setFont(self.name_font)
+        if option.state & QStyle.State_Selected:
+            painter.setPen(Qt.white)
+        else:
+            painter.setPen(QColor("#FFFFFF"))  # 更亮的白色
+
+        name_rect = QRect(
+            text_left,
+            rect.top() + self.padding,
+            text_width,
+            25  # 增加高度
+        )
+        painter.drawText(name_rect, Qt.AlignLeft | Qt.AlignVCenter, file_info.name)
+
+        # 绘制时间 - 弱化显示
+        painter.setFont(self.time_font)
+        if option.state & QStyle.State_Selected:
+            painter.setPen(QColor("#E0E0E0"))
+        else:
+            painter.setPen(QColor("#808080"))  # 更暗的灰色
+
+        time_text = file_info.modified_time.strftime("%Y-%m-%d %H:%M")
+        time_rect = QRect(
+            text_left,
+            rect.top() + self.padding + 30,
+            text_width,
+            20
+        )
+        painter.drawText(time_rect, Qt.AlignLeft | Qt.AlignVCenter, time_text)
+
+        # 绘制文件大小 - 弱化显示
+        if not file_info.is_folder and file_info.size > 0:
+            painter.setFont(self.size_font)
+            size_text = format_file_size(file_info.size)
+            size_rect = QRect(
+                text_left,
+                rect.top() + self.padding + 48,
+                text_width,
+                20
+            )
+            painter.drawText(size_rect, Qt.AlignLeft | Qt.AlignVCenter, size_text)
+
+        # 绘制版本号
+        if file_info.version is not None and file_info.version_str:
+            painter.setFont(self.version_font)
+
+            # 根据版本类型选择颜色
+            if file_info.is_aep:
+                if file_info.version == 0:
+                    painter.setPen(QColor("#FF9800"))  # 橙色 for T摄
+                else:
+                    painter.setPen(QColor("#4CAF50"))  # 绿色 for 本摄Vx
+            else:
+                painter.setPen(QColor("#4CAF50"))  # 绿色 for 普通版本
+
+            # 计算版本文字宽度来居中显示
+            version_text = file_info.version_str
+            fm = QFontMetrics(self.version_font)
+            text_width = fm.horizontalAdvance(version_text)
+
+            version_rect = QRect(
+                rect.right() - text_width - 15,
+                rect.top() + rect.height() // 2 - 20,
+                text_width + 10,
+                40
+            )
+            painter.drawText(version_rect, Qt.AlignCenter, version_text)
+
+        painter.restore()
+
+    def sizeHint(self, option: QStyleOptionViewItem, index) -> QSize:
+        """返回项目大小"""
+        return QSize(400, self.icon_size + self.padding * 2)
+
+
+class DetailedFileListWidget(QListWidget):
+    """详细文件列表控件"""
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setItemDelegate(FileItemDelegate(self))
+        self.setSpacing(4)
+        self.setUniformItemSizes(False)
+        self.setAlternatingRowColors(False)
+        self.setSelectionMode(QAbstractItemView.SingleSelection)
+
+        # 加载所有图标
+        self._load_icons()
+
+    def _load_icons(self):
+        """加载所有图标"""
+        icon_base = Path("_imgs")
+
+        # 文件类型图标
+        self.icons = {
+            'aep': self._load_icon(icon_base / "aep_icon.png"),
+            'psd': self._load_icon(icon_base / "psd_icon.png"),
+            'folder': self._load_icon(icon_base / "folder_icon.png"),
+            'image': self._load_icon(icon_base / "image_icon.png"),
+            'video': self._load_icon(icon_base / "video_icon.png"),
+            'file': self._load_icon(icon_base / "file_icon.png"),
+            'clip': self._load_icon(icon_base / "clip_icon.png"),
+            'maya': self._load_icon(icon_base / "maya_icon.png"),
+            '3dsmax': self._load_icon(icon_base / "3dsmax_icon.png"),
+            'blender': self._load_icon(icon_base / "blender_icon.png"),
+            'c4d': self._load_icon(icon_base / "c4d_icon.png"),
+            'fbx': self._load_icon(icon_base / "fbx_icon.png"),
+            'pld': self._load_icon(icon_base / "pld_icon.png"),
+            '3d': self._load_icon(icon_base / "3d_icon.png"),  # 通用3D图标
+            'png_seq': self._load_icon(icon_base / "png_seq_icon.png"),
+            'no_render': self._load_icon(icon_base / "no_render_icon.png"),
+        }
+
+    def _load_icon(self, path: Path) -> Optional[QIcon]:
+        """加载单个图标"""
+        if path.exists():
+            return QIcon(str(path))
+        return None
+
+    def add_file_item(self, file_info: FileInfo):
+        """添加文件项"""
+        item = QListWidgetItem()
+        item.setData(Qt.UserRole, str(file_info.path))
+        item.setData(Qt.UserRole + 1, file_info)
+
+        # 设置图标
+        icon = self._get_file_icon(file_info)
+        if icon:
+            item.setIcon(icon)
+
+        self.addItem(item)
+
+    def load_files(self, directory: Path, pattern: str = "*", expand_folders: bool = False):
+        """加载目录中的文件
+
+        Args:
+            directory: 目录路径
+            pattern: 文件匹配模式
+            expand_folders: 是否展开文件夹内容
+        """
+        self.clear()
+
+        if not directory.exists():
+            return
+
+        # 收集文件信息
+        files = []
+        for file_path in directory.glob(pattern):
+            if expand_folders and file_path.is_dir():
+                # 展开文件夹内容
+                for sub_file in file_path.rglob("*"):
+                    if sub_file.is_file():
+                        files.append(get_file_info(sub_file))
+            else:
+                files.append(get_file_info(file_path))
+
+        # 按修改时间降序排序（最新的在前）
+        files.sort(key=lambda f: f.modified_time, reverse=True)
+
+        # 添加到列表
+        for file_info in files:
+            self.add_file_item(file_info)
+
+    def _get_file_icon(self, file_info: FileInfo) -> Optional[QIcon]:
+        """获取文件图标"""
+        # 未渲染状态
+        if file_info.is_no_render:
+            return self.icons.get('no_render')
+
+        if file_info.is_folder:
+            # PNG序列文件夹特殊处理
+            if file_info.is_png_seq and file_info.first_png:
+                try:
+                    # 尝试加载第一张PNG作为缩略图
+                    pixmap = QPixmap(str(file_info.first_png))
+                    if not pixmap.isNull():
+                        scaled = pixmap.scaled(64, 64, Qt.KeepAspectRatio, Qt.SmoothTransformation)
+                        return QIcon(scaled)
+                except:
+                    pass
+                return self.icons.get('png_seq', self.icons.get('folder'))
+            return self.icons.get('folder')
+
+        # 文件扩展名
+        ext = file_info.path.suffix.lower()
+
+        # AEP文件
+        if ext == '.aep':
+            return self.icons.get('aep')
+
+        # PSD文件
+        if ext == '.psd':
+            return self.icons.get('psd')
+
+        # Clip文件
+        if ext == '.clip':
+            return self.icons.get('clip')
+
+        # 3D文件
+        if ext in ['.ma', '.mb']:
+            return self.icons.get('maya', self.icons.get('3d'))
+        if ext in ['.max', '.3ds']:
+            return self.icons.get('3dsmax', self.icons.get('3d'))
+        if ext == '.blend':
+            return self.icons.get('blender', self.icons.get('3d'))
+        if ext == '.c4d':
+            return self.icons.get('c4d', self.icons.get('3d'))
+        if ext in ['.fbx', '.obj', '.dae', '.abc', '.usd', '.usda', '.usdc']:
+            return self.icons.get('fbx', self.icons.get('3d'))
+        if ext == '.pld':
+            return self.icons.get('pld')
+        if ext in THREED_EXTENSIONS:
+            return self.icons.get('3d')
+
+        # 图片文件
+        if ext in IMAGE_EXTENSIONS:
+            # 尝试加载缩略图
+            try:
+                pixmap = QPixmap(str(file_info.path))
+                if not pixmap.isNull():
+                    scaled = pixmap.scaled(64, 64, Qt.KeepAspectRatio, Qt.SmoothTransformation)
+                    return QIcon(scaled)
+            except:
+                pass
+            return self.icons.get('image')
+
+        # 视频文件
+        if ext in VIDEO_EXTENSIONS:
+            return self.icons.get('video')
+
+        # 默认文件图标
+        return self.icons.get('file')
 
 
 class BatchAepDialog(QDialog):
@@ -1031,6 +1129,28 @@ class ProjectManager:
                 dst = cut_path / aep_name
                 copy_file_safe(template, dst)
 
+    def get_next_version(self, target_dir: Path, pattern: str) -> int:
+        """获取下一个版本号
+
+        Args:
+            target_dir: 目标目录
+            pattern: 文件名模式（不含版本号部分）
+
+        Returns:
+            int: 下一个版本号
+        """
+        if not target_dir.exists():
+            return 1
+
+        # 查找所有匹配的文件
+        max_version = 0
+        for file in target_dir.iterdir():
+            version = extract_version_from_filename(file.stem)
+            if version is not None and file.stem.startswith(pattern):
+                max_version = max(max_version, version)
+
+        return max_version + 1
+
 
 # ================================ 主窗口类 ================================ #
 
@@ -1041,8 +1161,16 @@ class CXProjectManager(QMainWindow):
 
     def __init__(self):
         super().__init__()
-        self.setWindowTitle("CX Project Manager - 动画项目管理工具")
-        self.resize(1200, 700)
+        # 使用版本信息
+        version = version_info.get("version", "2.1")
+        build = version_info.get("build-version", "")
+        if build:
+            version_str = f"{version} {build}"
+        else:
+            version_str = version
+
+        self.setWindowTitle(f"CX Project Manager - 动画项目管理工具 v{version_str}")
+        self.resize(1300, 750)
 
         # 初始化项目管理器
         self.project_manager = ProjectManager()
@@ -1051,6 +1179,13 @@ class CXProjectManager(QMainWindow):
         self.project_base: Optional[Path] = None
         self.project_config: Optional[Dict] = None
         self.app_settings = QSettings("CXStudio", "ProjectManager")
+
+        # 版本确认跳过设置
+        self.skip_version_confirmation = {
+            "bg": False,
+            "cell": False,
+            "3dcg": False
+        }
 
         # 初始化控件变量
         self._init_widget_variables()
@@ -1124,11 +1259,11 @@ class CXProjectManager(QMainWindow):
         self.txt_project_stats = None
         self.browser_tree = None
         self.file_tabs = None
-        self.vfx_list = None
-        self.cell_list = None
-        self.bg_list = None
-        self.render_list = None
-        self.cg_list = None
+        self.vfx_list: Optional[DetailedFileListWidget] = None
+        self.cell_list: Optional[DetailedFileListWidget] = None
+        self.bg_list: Optional[DetailedFileListWidget] = None
+        self.render_list: Optional[DetailedFileListWidget] = None
+        self.cg_list: Optional[DetailedFileListWidget] = None
         self.lbl_current_cut = None
         self.txt_cut_search = None
         self.btn_clear_search = None
@@ -1460,7 +1595,7 @@ class CXProjectManager(QMainWindow):
                 border: 1px solid #3C3C3C;
                 border-radius: 4px;
                 padding: 8px;
-                font-family: Consolas, Monaco, monospace;
+                font-family: "MiSans", "微软雅黑", "Segoe UI", Arial;
                 font-size: 12px;
             }
         """)
@@ -1548,11 +1683,10 @@ class CXProjectManager(QMainWindow):
 
         return right_panel
 
-    def _create_file_list_widget(self) -> QListWidget:
+    def _create_file_list_widget(self) -> DetailedFileListWidget:
         """创建文件列表控件"""
-        list_widget = QListWidget()
-        list_widget.setAlternatingRowColors(True)
-        list_widget.itemDoubleClicked.connect(lambda item: self._open_file_location(item))
+        list_widget = DetailedFileListWidget()
+        list_widget.itemDoubleClicked.connect(self._on_file_item_double_clicked)
         return list_widget
 
     def _setup_menubar(self):
@@ -1885,7 +2019,7 @@ class CXProjectManager(QMainWindow):
         else:
             # 选择文件
             file_filter = {
-                "bg": "图像文件 (*.psd *.png *.jpg *.jpeg)",
+                "bg": "图像文件 (*.psd *.png *.jpg *.jpeg *.tga *.tiff *.bmp *.exr *.dpx)",
                 "timesheet": "CSV 文件 (*.csv)",
             }.get(material_type, "所有文件 (*.*)")
 
@@ -1958,12 +2092,19 @@ class CXProjectManager(QMainWindow):
             for mt, path in imports:
                 getattr(self, f"txt_{mt}_path").clear()
 
+            # 重置版本确认跳过设置（为下次导入准备）
+            self.skip_version_confirmation = {
+                "bg": False,
+                "cell": False,
+                "3dcg": False
+            }
+
     def import_all(self):
         """批量导入所有已选择的素材"""
         self.import_single()
 
     def _import_material(self, material_type: str, source_path: str, target: str) -> bool:
-        """执行素材导入"""
+        """执行素材导入（带版本管理）"""
         try:
             src = Path(source_path)
             if not src.exists():
@@ -1976,44 +2117,69 @@ class CXProjectManager(QMainWindow):
                 ep_id, cut_id = target.split("|")
                 vfx_base = self.project_base / ep_id / "01_vfx"
                 cg_base = self.project_base / ep_id / "02_3dcg"
+                ep_part = ep_id.upper() + "_"
             else:
                 cut_id = target
                 vfx_base = self.project_base / "01_vfx"
                 cg_base = self.project_base / "02_3dcg"
+                ep_part = ""
+
+            # 构建基础文件名（不含版本号）
+            base_name = f"{proj_name}_{ep_part}{cut_id}"
 
             # 根据类型处理
             if material_type == "bg":
-                # BG 命名
-                if "|" in target:
-                    ep_part = ep_id.upper()
-                    file_name = f"{proj_name}_{ep_part}_{cut_id}_t1{src.suffix.lower()}"
-                else:
-                    file_name = f"{proj_name}_{cut_id}_t1{src.suffix.lower()}"
+                bg_dir = vfx_base / cut_id / "bg"
+                ensure_dir(bg_dir)
 
-                dst = vfx_base / cut_id / "bg" / file_name
-                ensure_dir(dst.parent)
+                # 获取版本号
+                version = self.project_manager.get_next_version(bg_dir, base_name)
+
+                # 确认版本号
+                if not self.skip_version_confirmation["bg"] and bg_dir.exists() and any(bg_dir.iterdir()):
+                    dialog = VersionConfirmDialog("BG", version, self)
+                    if dialog.exec() == QDialog.Accepted:
+                        version = dialog.get_version()
+                        if dialog.should_skip_confirmation():
+                            self.skip_version_confirmation["bg"] = True
+                    else:
+                        return False
+
+                # 复制文件
+                file_name = f"{base_name}_T{version}{src.suffix.lower()}"
+                dst = bg_dir / file_name
                 copy_file_safe(src, dst)
 
             elif material_type == "cell":
-                # Cell 文件夹命名
-                if "|" in target:
-                    ep_part = ep_id.upper()
-                    folder_name = f"{proj_name}_{ep_part}_{cut_id}_t1"
-                else:
-                    folder_name = f"{proj_name}_{cut_id}_t1"
+                cell_dir = vfx_base / cut_id / "cell"
+                ensure_dir(cell_dir)
 
-                cell_dir = vfx_base / cut_id / "cell" / folder_name
-                if cell_dir.exists():
-                    shutil.rmtree(cell_dir)
-                shutil.copytree(src, cell_dir)
+                # 获取版本号
+                version = self.project_manager.get_next_version(cell_dir, base_name)
+
+                # 确认版本号
+                if not self.skip_version_confirmation["cell"] and cell_dir.exists() and any(cell_dir.iterdir()):
+                    dialog = VersionConfirmDialog("Cell", version, self)
+                    if dialog.exec() == QDialog.Accepted:
+                        version = dialog.get_version()
+                        if dialog.should_skip_confirmation():
+                            self.skip_version_confirmation["cell"] = True
+                    else:
+                        return False
+
+                # 复制文件夹
+                folder_name = f"{base_name}_T{version}"
+                dst_folder = cell_dir / folder_name
+                if dst_folder.exists():
+                    shutil.rmtree(dst_folder)
+                shutil.copytree(src, dst_folder)
 
             elif material_type == "3dcg":
-                # 3DCG 导入
                 ensure_dir(cg_base)
                 cg_cut_dir = cg_base / cut_id
                 ensure_dir(cg_cut_dir)
 
-                # 复制文件夹内容
+                # 3DCG直接复制，不需要版本管理
                 for item in src.iterdir():
                     if item.is_file():
                         copy_file_safe(item, cg_cut_dir / item.name)
@@ -2024,6 +2190,7 @@ class CXProjectManager(QMainWindow):
                         shutil.copytree(item, target_dir)
 
             else:  # timesheet
+                # Timesheet直接覆盖，不需要版本管理
                 dst = vfx_base / "timesheets" / f"{cut_id}.csv"
                 ensure_dir(dst.parent)
                 copy_file_safe(src, dst)
@@ -2035,7 +2202,7 @@ class CXProjectManager(QMainWindow):
             return False
 
     def copy_aep_template(self):
-        """复制AEP模板"""
+        """复制AEP模板（带版本管理）"""
         if not self.project_base:
             QMessageBox.warning(self, "错误", "请先打开或创建项目")
             return
@@ -2107,6 +2274,10 @@ class CXProjectManager(QMainWindow):
             self, "成功", f"已复制 {copied} 个 AEP 模板到 Cut {cut_id}"
         )
         self._refresh_tree()
+
+        # 如果在浏览器Tab，刷新文件列表
+        if self.tabs.currentIndex() == 1 and self.current_cut_id == cut_id:
+            self._load_cut_files(cut_id, ep_id)
 
     def batch_copy_aep_template(self):
         """批量复制AEP模板"""
@@ -2750,36 +2921,37 @@ class CXProjectManager(QMainWindow):
 
     def _load_vfx_files(self, vfx_path: Path):
         """加载VFX文件"""
-        if not vfx_path.exists():
-            return
+        if vfx_path.exists():
+            self.vfx_list.load_files(vfx_path, "*.aep")
 
-        aep_count = 0
-        for file in vfx_path.glob("*.aep"):
-            item = QListWidgetItem(file.name)
-            item.setData(Qt.UserRole, str(file))
-            self.vfx_list.addItem(item)
-            aep_count += 1
-
-        if aep_count == 0:
+        if self.vfx_list.count() == 0:
             item = QListWidgetItem("(没有 AEP 文件)")
             item.setData(Qt.UserRole, None)
             item.setFlags(item.flags() & ~Qt.ItemIsEnabled)
             self.vfx_list.addItem(item)
 
     def _load_cell_files(self, cell_path: Path):
-        """加载Cell文件"""
+        """加载Cell文件 - 仅显示带版本号的文件夹"""
         if not cell_path.exists():
             return
 
-        cell_count = 0
+        # 收集所有Cell文件夹
+        folders = []
         for folder in cell_path.iterdir():
             if folder.is_dir():
-                item = QListWidgetItem(f"📁 {folder.name}")
-                item.setData(Qt.UserRole, str(folder))
-                self.cell_list.addItem(item)
-                cell_count += 1
+                file_info = get_file_info(folder)
+                # 只添加带版本号的文件夹
+                if file_info.version is not None:
+                    folders.append(file_info)
 
-        if cell_count == 0:
+        # 按修改时间排序（最新的在前）
+        folders.sort(key=lambda f: f.modified_time, reverse=True)
+
+        # 添加到列表
+        for folder_info in folders:
+            self.cell_list.add_file_item(folder_info)
+
+        if self.cell_list.count() == 0:
             item = QListWidgetItem("(没有 Cell 文件夹)")
             item.setData(Qt.UserRole, None)
             item.setFlags(item.flags() & ~Qt.ItemIsEnabled)
@@ -2790,15 +2962,20 @@ class CXProjectManager(QMainWindow):
         if not bg_path.exists():
             return
 
-        bg_count = 0
+        # 收集所有BG文件
+        files = []
         for file in bg_path.iterdir():
-            if file.is_file() and file.suffix.lower() in ['.psd', '.png', '.jpg', '.jpeg']:
-                item = QListWidgetItem(file.name)
-                item.setData(Qt.UserRole, str(file))
-                self.bg_list.addItem(item)
-                bg_count += 1
+            if file.is_file() and file.suffix.lower() in IMAGE_EXTENSIONS:
+                files.append(get_file_info(file))
 
-        if bg_count == 0:
+        # 按修改时间排序（最新的在前）
+        files.sort(key=lambda f: f.modified_time, reverse=True)
+
+        # 添加到列表
+        for file_info in files:
+            self.bg_list.add_file_item(file_info)
+
+        if self.bg_list.count() == 0:
             item = QListWidgetItem("(没有 BG 文件)")
             item.setData(Qt.UserRole, None)
             item.setFlags(item.flags() & ~Qt.ItemIsEnabled)
@@ -2807,63 +2984,68 @@ class CXProjectManager(QMainWindow):
     def _load_render_files(self, render_path: Path):
         """加载渲染文件"""
         if not render_path.exists():
+            # 如果render目录都不存在，显示未渲染
+            no_render_info = FileInfo(
+                path=render_path,
+                name="未渲染",
+                modified_time=datetime.now(),
+                size=0,
+                is_folder=False,
+                is_no_render=True
+            )
+            self.render_list.add_file_item(no_render_info)
             return
 
-        render_count = 0
+        render_items = []
+        has_any_render = False
 
-        # PNG序列
+        # PNG序列文件夹
         png_path = render_path / "png_seq"
-        if png_path.exists():
-            png_files = list(png_path.glob("*.png"))
-            if png_files:
-                item = QListWidgetItem(f"📁 PNG序列 ({len(png_files)}张)")
-                item.setData(Qt.UserRole, str(png_path))
-                self.render_list.addItem(item)
-                render_count += 1
+        if png_path.exists() and any(png_path.glob("*.png")):
+            # 有PNG序列
+            render_items.append(get_png_seq_info(png_path))
+            has_any_render = True
 
         # ProRes视频
         prores_path = render_path / "prores"
         if prores_path.exists():
             for file in prores_path.glob("*.mov"):
-                item = QListWidgetItem(f"🎬 {file.name}")
-                item.setData(Qt.UserRole, str(file))
-                self.render_list.addItem(item)
-                render_count += 1
+                render_items.append(get_file_info(file))
+                has_any_render = True
 
         # MP4视频
         mp4_path = render_path / "mp4"
         if mp4_path.exists():
             for file in mp4_path.glob("*.mp4"):
-                item = QListWidgetItem(f"🎥 {file.name}")
-                item.setData(Qt.UserRole, str(file))
-                self.render_list.addItem(item)
-                render_count += 1
+                render_items.append(get_file_info(file))
+                has_any_render = True
 
-        if render_count == 0:
-            item = QListWidgetItem("(没有渲染输出)")
-            item.setData(Qt.UserRole, None)
-            item.setFlags(item.flags() & ~Qt.ItemIsEnabled)
-            self.render_list.addItem(item)
+        if has_any_render:
+            render_items.sort(key=lambda f: f.modified_time, reverse=True)
+
+        # 添加到列表
+        for item_info in render_items:
+            self.render_list.add_file_item(item_info)
 
     def _load_cg_files(self, cg_path: Path):
-        """加载3DCG文件"""
+        """加载3DCG文件 - 递归加载所有文件"""
         if not cg_path.exists():
             return
 
-        cg_count = 0
-        for item_path in cg_path.iterdir():
-            if item_path.is_file():
-                item = QListWidgetItem(item_path.name)
-                item.setData(Qt.UserRole, str(item_path))
-                self.cg_list.addItem(item)
-                cg_count += 1
-            elif item_path.is_dir():
-                item = QListWidgetItem(f"📁 {item_path.name}")
-                item.setData(Qt.UserRole, str(item_path))
-                self.cg_list.addItem(item)
-                cg_count += 1
+        # 递归加载所有文件
+        files = []
+        for item in cg_path.rglob("*"):
+            if item.is_file():
+                files.append(get_file_info(item))
 
-        if cg_count == 0:
+        # 按修改时间排序（最新的在前）
+        files.sort(key=lambda f: f.modified_time, reverse=True)
+
+        # 添加到列表
+        for file_info in files:
+            self.cg_list.add_file_item(file_info)
+
+        if self.cg_list.count() == 0:
             item = QListWidgetItem("(没有 3DCG 文件)")
             item.setData(Qt.UserRole, None)
             item.setFlags(item.flags() & ~Qt.ItemIsEnabled)
@@ -2881,6 +3063,7 @@ class CXProjectManager(QMainWindow):
 
         for index, name, list_widget in tab_info:
             count = list_widget.count()
+            # 检查是否有实际文件（排除"没有文件"提示项）
             if count > 0 and list_widget.item(0).data(Qt.UserRole) is not None:
                 self.file_tabs.setTabText(index, f"{name} ({count})")
             else:
@@ -2898,15 +3081,36 @@ class CXProjectManager(QMainWindow):
         for i, name in enumerate(["VFX", "Cell", "BG", "Render", "3DCG"]):
             self.file_tabs.setTabText(i, name)
 
-    def _open_file_location(self, item: QListWidgetItem):
-        """在文件管理器中打开文件位置"""
+    def _on_file_item_double_clicked(self, item: QListWidgetItem):
+        """处理文件项目双击"""
         file_path = item.data(Qt.UserRole)
         if not file_path:
             return
 
         path = Path(file_path)
-        if path.exists():
+        if not path.exists():
+            return
+
+        # 检查是否是视频文件
+        if path.suffix.lower() in VIDEO_EXTENSIONS:
+            # 使用默认播放器播放视频
+            self._play_video(path)
+        else:
+            # 其他文件在文件管理器中打开
             open_in_file_manager(path)
+
+    def _play_video(self, video_path: Path):
+        """使用默认播放器播放视频"""
+        system = platform.system()
+        try:
+            if system == "Windows":
+                os.startfile(str(video_path))
+            elif system == "Darwin":  # macOS
+                subprocess.run(["open", str(video_path)])
+            else:  # Linux
+                subprocess.run(["xdg-open", str(video_path)])
+        except Exception as e:
+            print(f"播放视频失败: {e}")
 
     def _on_cut_search_changed(self, text: str):
         """处理Cut搜索框内容变化"""
@@ -3081,7 +3285,7 @@ class CXProjectManager(QMainWindow):
             action.setEnabled(False)
             return
 
-        for path in recent_projects[:10]:  # 最多显示10个
+        for path in recent_projects[:10]:
             if Path(path).exists():
                 action = self.recent_menu.addAction(Path(path).name)
                 action.setToolTip(path)
@@ -3133,9 +3337,11 @@ class CXProjectManager(QMainWindow):
 
     def show_help(self):
         """显示帮助信息"""
-        help_text = """
+        help_text = f"""
 CX Project Manager 使用说明
 ========================
+
+版本: {version_info.get("version", "2.1")} {version_info.get("build-version", "")}
 
 ## 项目模式
 - **标准模式**: 支持创建多个Episode（ep01, ep02等），每个Episode下可创建多个Cut
@@ -3147,6 +3353,24 @@ CX Project Manager 使用说明
 - 特殊Episode下也可以包含Cut
 - 适合制作单集动画、PV、广告等项目
 
+## 版本管理
+- BG和Cell导入时自动管理版本号（T1, T2, T3...）
+- AEP文件版本显示：V0显示"T摄"，V1以后显示"本摄Vx"
+- 可设置自动使用推荐版本号，跳过确认对话框
+- 文件按修改时间排序，最新的显示在最前面
+
+## 文件浏览
+- 完整文件名加粗显示在图标右侧
+- 显示文件修改时间和大小（弱化显示）
+- 所有文件类型都有专门的图标
+- Cell仅显示带版本号的文件夹
+- 3DCG Tab会递归显示所有文件
+- PNG序列显示第一张图片的缩略图
+- 没有渲染时显示"未渲染"状态
+- 支持TGA图片格式
+- 双击视频文件直接播放
+- 双击其他文件在资源管理器中打开
+
 ## 快捷键
 - Ctrl+N: 新建项目
 - Ctrl+O: 打开项目
@@ -3155,7 +3379,7 @@ CX Project Manager 使用说明
 - Ctrl+Q: 退出
 
 ## 素材导入
-- BG: 导入单个背景图像文件
+- BG: 导入单个背景图像文件（支持psd, png, jpg, jpeg, tga, tiff, bmp, exr, dpx）
 - Cell: 导入包含分层素材的文件夹
 - 3DCG: 导入3D素材文件夹
 - Timesheet: 导入时间表CSV文件
@@ -3175,6 +3399,8 @@ CX Project Manager 使用说明
 - 08_tools: 工具脚本
 - 98_tmp: 临时文件
 - 99_other: 其他文件
+
+作者: {version_info.get("author", "千石まよひ")}
 """
 
         dialog = QMessageBox(self)
@@ -3183,7 +3409,7 @@ CX Project Manager 使用说明
         dialog.setTextFormat(Qt.PlainText)
         dialog.setStyleSheet("""
             QMessageBox {
-                min-width: 600px;
+                min-width: 700px;
             }
             QLabel {
                 font-family: Consolas, Monaco, monospace;
@@ -3194,22 +3420,16 @@ CX Project Manager 使用说明
 
     def show_about(self):
         """显示关于对话框"""
-        about_text = """CX Project Manager - 动画项目管理工具
+        about_text = f"""CX Project Manager - 动画项目管理工具
 
-版本: 2.0
-作者: 千石まよひ
+版本: {version_info.get("version", "2.1")} {version_info.get("build-version", "")}
+作者: {version_info.get("author", "千石まよひ")}
+邮箱: {version_info.get("email", "tammcx@gmail.com")}
 GitHub: https://github.com/ChenxingM/CXProjectManager
 
-主要特性:
-• 支持标准模式和单集/PV模式
-• 单集模式下支持创建特殊类型Episode
-• 项目结构标准化管理
-• 素材导入和批量处理
-• AEP模板自动化管理
-• Cut搜索和快速定位
-• 深色主题UI
+{version_info.get("description", "动画项目管理工具，专为动画制作流程优化设计。")}
 
-感谢使用！如有问题或建议，欢迎在GitHub提交Issue。"""
+如有问题或建议，欢迎在GitHub提交Issue。"""
 
         QMessageBox.about(self, "关于", about_text)
 
@@ -3259,7 +3479,7 @@ class ProjectBrowser(QWidget):
         self.tree.itemClicked.connect(self._on_tree_clicked)
 
         # 右侧文件列表
-        self.file_list = QListWidget()
+        self.file_list = DetailedFileListWidget()
 
         splitter.addWidget(self.tree)
         splitter.addWidget(self.file_list)
@@ -3340,7 +3560,6 @@ class ProjectBrowser(QWidget):
 
     def _on_tree_clicked(self, item: QTreeWidgetItem):
         """树节点点击事件"""
-        # 这里可以实现文件列表的更新逻辑
         pass
 
 
@@ -3351,10 +3570,14 @@ __all__ = [
     'ProjectBrowser',
     'SearchLineEdit',
     'BatchAepDialog',
+    'VersionConfirmDialog',
+    'DetailedFileListWidget',
+    'FileItemDelegate',
     'ProjectManager',
     'EpisodeType',
     'ProjectPaths',
-    'MaterialType'
+    'MaterialType',
+    'FileInfo'
 ]
 
 
@@ -3367,7 +3590,9 @@ def main():
     app.setOrganizationName("CXStudio")
 
     # 设置应用图标（可选）
-    # app.setWindowIcon(QIcon("icon.png"))
+    icon_path = Path("_imgs/app_icon.png")
+    if icon_path.exists():
+        app.setWindowIcon(QIcon(str(icon_path)))
 
     window = CXProjectManager()
     window.show()
