@@ -50,7 +50,7 @@ from PySide6.QtWidgets import (
     QTextEdit, QListWidget, QListWidgetItem, QDialog, QDialogButtonBox,
     QRadioButton, QButtonGroup, QListView, QAbstractItemView,
     QStyledItemDelegate, QStyle, QStyleOptionViewItem, QPlainTextEdit,
-    QTableWidget, QTableWidgetItem, QHeaderView
+    QTableWidget, QTableWidgetItem, QHeaderView, QInputDialog
 )
 
 # 导入样式表
@@ -2198,7 +2198,7 @@ class CXProjectManager(QMainWindow):
                     QMessageBox.warning(self, "错误", "请先创建Episode")
                     return
 
-                episode_id, ok = QMessageBox.getItem(
+                episode_id, ok = QInputDialog.getItem(
                     self, "选择Episode",
                     "请选择要创建兼用卡的Episode:",
                     episodes, 0, False
