@@ -3143,13 +3143,17 @@ class CXProjectManager(QMainWindow):
         # 检查单集模式下的限制
         if self.chk_no_episode.isChecked() and episode_type.lower() == "ep":
             self.btn_create_episode.setEnabled(False)
+            self.btn_batch_episode.setEnabled(False)
+            self.lbl_batch_ep.setEnabled(False)
+            self.spin_ep_from.setEnabled(False)
+            self.spin_ep_to.setEnabled(False)
             self.btn_create_episode.setToolTip("单集模式下不能创建标准集数(ep)")
         else:
             self.btn_create_episode.setEnabled(True)
             self.btn_create_episode.setToolTip("")
 
         # 根据类型调整输入提示和批量创建的可用性
-        if episode_type.lower() == "ep":
+        if episode_type.lower() == "ep" and not self.chk_no_episode.isChecked():
             self.txt_episode.setPlaceholderText("编号 (如: 01, 02) - 可留空")
             self.btn_batch_episode.setEnabled(True)
             self.lbl_batch_ep.setEnabled(True)
