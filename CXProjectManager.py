@@ -16,6 +16,8 @@ CX Project Manager - 动画项目管理工具（优化版）
 • 版本管理系统
 • 文件预览和时间显示
 • 深色主题 UI
+• 项目注册管理系统
+• 项目浏览器和删除功能
 
 Author: 千石まよひ
 GitHub: https://github.com/ChenxingM/CXProjectManager
@@ -30,9 +32,10 @@ import platform
 import re
 from datetime import datetime
 from pathlib import Path
-from typing import Dict, List, Optional, Tuple, Set, Union
-from dataclasses import dataclass, field
+from typing import Dict, List, Optional, Tuple, Set, Union, Any, Callable
+from dataclasses import dataclass, field, asdict
 from enum import Enum
+from functools import partial
 
 from PySide6.QtCore import Qt, QSettings, Signal, QSize, QTimer, QRect, QDateTime, QPoint
 from PySide6.QtGui import (
@@ -46,7 +49,8 @@ from PySide6.QtWidgets import (
     QTreeWidget, QTreeWidgetItem, QVBoxLayout, QWidget, QTabWidget,
     QTextEdit, QListWidget, QListWidgetItem, QDialog, QDialogButtonBox,
     QRadioButton, QButtonGroup, QListView, QAbstractItemView,
-    QStyledItemDelegate, QStyle, QStyleOptionViewItem, QPlainTextEdit
+    QStyledItemDelegate, QStyle, QStyleOptionViewItem, QPlainTextEdit,
+    QTableWidget, QTableWidgetItem, QHeaderView
 )
 
 # 导入样式表
@@ -57,7 +61,7 @@ from _utils._version_info import version_info
 
 # ================================ 常量定义 ================================ #
 
-# 图片文件扩展名 - 添加了.tga支持
+# 图片文件扩展名
 IMAGE_EXTENSIONS = {'.png', '.jpg', '.jpeg', '.psd', '.tiff', '.bmp', '.gif', '.tga', '.exr', '.dpx'}
 
 # 视频文件扩展名
@@ -81,21 +85,25 @@ VERSION_PATTERN = re.compile(r'_[TVtv](\d+)(?:\.\w+)?$')
 # Cut编号正则表达式（支持数字+字母后缀）
 CUT_PATTERN = re.compile(r'^(\d+)([A-Za-z]?)$')
 
+# 项目注册文件名
+PROJECT_REGISTRY_FILE = "project_registry.json"
+PROJECT_SETTINGS_DIR = "_proj_settings"
+
 
 # ================================ 枚举和数据类 ================================ #
 
 class EpisodeType(Enum):
     """Episode 类型枚举"""
-    EP = "ep"  # 普通集数
-    PV = "pv"  # Promotional Video
-    OP = "op"  # Opening
-    ED = "ed"  # Ending
-    SP = "sp"  # Special
-    OVA = "ova"  # Original Video Animation
-    CM = "cm"  # Commercial
-    SV = "sv"  # Special Version
-    EX = "ex"  # Extra
-    NC = "nc"  # Non-Credit
+    EP = "ep"
+    PV = "pv"
+    OP = "op"
+    ED = "ed"
+    SP = "sp"
+    OVA = "ova"
+    CM = "cm"
+    SV = "sv"
+    EX = "ex"
+    NC = "nc"
 
     @classmethod
     def get_all_types(cls) -> List[str]:
@@ -106,6 +114,28 @@ class EpisodeType(Enum):
     def get_special_types(cls) -> List[str]:
         """获取特殊类型（非 ep）"""
         return [t.value for t in cls if t != cls.EP]
+
+
+@dataclass
+class ProjectInfo:
+    """项目注册信息"""
+    project_name: str
+    project_path: str
+    config_path: str
+    created_time: str
+    episode_count: int = 0
+    episode_list: List[str] = field(default_factory=list)
+    no_episode: bool = False
+    last_accessed: str = field(default_factory=lambda: datetime.now().isoformat())
+
+    def to_dict(self) -> Dict:
+        """转换为字典"""
+        return asdict(self)
+
+    @classmethod
+    def from_dict(cls, data: Dict) -> 'ProjectInfo':
+        """从字典创建"""
+        return cls(**data)
 
 
 @dataclass
@@ -135,9 +165,9 @@ class MaterialType:
 @dataclass
 class ReuseCut:
     """兼用cut信息"""
-    cuts: List[str]  # 所有兼用的cut编号
-    main_cut: str  # 主cut（最小编号）
-    episode_id: Optional[str] = None  # 所属Episode
+    cuts: List[str]
+    main_cut: str
+    episode_id: Optional[str] = None
 
     def to_dict(self) -> Dict:
         """转换为字典"""
@@ -162,11 +192,9 @@ class ReuseCut:
 
     def contains_cut(self, cut_id: str) -> bool:
         """检查是否包含指定cut"""
-        # 处理带字母后缀的情况
         for cut in self.cuts:
             if cut == cut_id:
                 return True
-            # 检查数字部分是否匹配
             match1 = CUT_PATTERN.match(cut)
             match2 = CUT_PATTERN.match(cut_id)
             if match1 and match2 and match1.group(1) == match2.group(1):
@@ -183,65 +211,38 @@ class FileInfo:
     modified_time: datetime = field(default_factory=datetime.now)
     size: int = 0
     is_folder: bool = False
-    is_aep: bool = False  # 添加AEP标识
-    is_png_seq: bool = False  # PNG序列标识
-    first_png: Optional[Path] = None  # PNG序列第一张
-    is_no_render: bool = False  # 未渲染标识
-    is_reuse_cut: bool = False  # 是否是兼用cut
+    is_aep: bool = False
+    is_png_seq: bool = False
+    first_png: Optional[Path] = None
+    is_no_render: bool = False
+    is_reuse_cut: bool = False
 
     @property
     def version_str(self) -> str:
         """获取版本字符串"""
         if self.version is not None:
-            # AEP文件的特殊版本显示
             if self.is_aep:
-                if self.version == 0:
-                    return "T摄"
-                else:
-                    return f"本摄V{self.version}"
-            # 其他文件的正常版本显示
+                return "T摄" if self.version == 0 else f"本摄V{self.version}"
             else:
-                if "V" in self.name or "v" in self.name:
-                    return f"V{self.version}"
-                elif "T" in self.name or "t" in self.name:
-                    return f"T{self.version}"
-        return ""  # 返回空字符串表示没有版本号
+                prefix = "V" if "V" in self.name or "v" in self.name else "T"
+                return f"{prefix}{self.version}"
+        return ""
 
 
 # ================================ 工具函数 ================================ #
 
 def zero_pad(number: int, width: int = 3) -> str:
-    """数字补零
-
-    Args:
-        number: 要补零的数字
-        width: 目标宽度
-
-    Returns:
-        str: 补零后的字符串
-    """
+    """数字补零"""
     return str(number).zfill(width)
 
 
 def ensure_dir(path: Path) -> None:
-    """确保目录存在
-
-    Args:
-        path: 要创建的目录路径
-    """
+    """确保目录存在"""
     path.mkdir(parents=True, exist_ok=True)
 
 
 def copy_file_safe(src: Path, dst: Path) -> bool:
-    """安全复制文件
-
-    Args:
-        src: 源文件路径
-        dst: 目标文件路径
-
-    Returns:
-        bool: 是否成功复制
-    """
+    """安全复制文件"""
     try:
         ensure_dir(dst.parent)
         shutil.copy2(src, dst)
@@ -252,11 +253,7 @@ def copy_file_safe(src: Path, dst: Path) -> bool:
 
 
 def open_in_file_manager(path: Path) -> None:
-    """在文件管理器中打开路径
-
-    Args:
-        path: 要打开的路径
-    """
+    """在文件管理器中打开路径"""
     if not path or not path.exists():
         return
 
@@ -273,42 +270,21 @@ def open_in_file_manager(path: Path) -> None:
             else:
                 subprocess.run(["open", str(path)])
         else:  # Linux
-            if path.is_file():
-                subprocess.run(["xdg-open", str(path.parent)])
-            else:
-                subprocess.run(["xdg-open", str(path)])
+            subprocess.run(["xdg-open", str(path.parent if path.is_file() else path)])
     except Exception as e:
         print(f"打开文件管理器失败: {e}")
 
 
 def extract_version_from_filename(filename: str) -> Optional[int]:
-    """从文件名中提取版本号
-
-    Args:
-        filename: 文件名
-
-    Returns:
-        Optional[int]: 版本号，如果没有则返回None
-    """
-    # 特殊处理_v0的情况
+    """从文件名中提取版本号"""
     if "_v0" in filename.lower():
         return 0
-
     match = VERSION_PATTERN.search(filename)
-    if match:
-        return int(match.group(1))
-    return None
+    return int(match.group(1)) if match else None
 
 
 def format_file_size(size: int) -> str:
-    """格式化文件大小
-
-    Args:
-        size: 文件大小（字节）
-
-    Returns:
-        str: 格式化后的字符串
-    """
+    """格式化文件大小"""
     for unit in ['B', 'KB', 'MB', 'GB']:
         if size < 1024.0:
             return f"{size:.1f} {unit}"
@@ -317,31 +293,16 @@ def format_file_size(size: int) -> str:
 
 
 def get_file_info(path: Path) -> FileInfo:
-    """获取文件信息
-
-    Args:
-        path: 文件路径
-
-    Returns:
-        FileInfo: 文件信息对象
-    """
+    """获取文件信息"""
     stat = path.stat()
     is_aep = path.suffix.lower() == '.aep'
 
-    # 检查是否是兼用cut文件（文件名包含多个下划线分隔的数字）
+    # 检查是否是兼用cut文件
     is_reuse_cut = False
-    if path.stem.count('_') > 3:  # 简单判断
+    if path.stem.count('_') > 3:
         parts = path.stem.split('_')
-        # 检查是否有连续的数字部分
-        consecutive_nums = 0
-        for part in parts:
-            if part.isdigit() and len(part) == 3:
-                consecutive_nums += 1
-            else:
-                if consecutive_nums > 1:
-                    is_reuse_cut = True
-                    break
-                consecutive_nums = 0
+        consecutive_nums = sum(1 for part in parts if part.isdigit() and len(part) == 3)
+        is_reuse_cut = consecutive_nums > 1
 
     return FileInfo(
         path=path,
@@ -356,21 +317,10 @@ def get_file_info(path: Path) -> FileInfo:
 
 
 def get_png_seq_info(png_seq_path: Path) -> FileInfo:
-    """获取PNG序列文件夹信息
-
-    Args:
-        png_seq_path: PNG序列文件夹路径
-
-    Returns:
-        FileInfo: 包含PNG序列信息的文件信息对象
-    """
+    """获取PNG序列文件夹信息"""
     stat = png_seq_path.stat()
-
-    # 查找第一张PNG
-    first_png = None
     png_files = sorted(png_seq_path.glob("*.png"))
-    if png_files:
-        first_png = png_files[0]
+    first_png = png_files[0] if png_files else None
 
     return FileInfo(
         path=png_seq_path,
@@ -384,38 +334,261 @@ def get_png_seq_info(png_seq_path: Path) -> FileInfo:
 
 
 def parse_cut_id(cut_id: str) -> Tuple[int, str]:
-    """解析Cut编号
-
-    Args:
-        cut_id: Cut编号（可能包含字母后缀）
-
-    Returns:
-        Tuple[int, str]: (数字部分, 字母后缀)
-    """
+    """解析Cut编号"""
     match = CUT_PATTERN.match(cut_id)
     if match:
-        num_part = int(match.group(1))
-        letter_part = match.group(2)
-        return num_part, letter_part
-    else:
-        # 尝试直接转换为数字
-        try:
-            return int(cut_id), ""
-        except ValueError:
-            raise ValueError(f"无效的Cut编号: {cut_id}")
+        return int(match.group(1)), match.group(2)
+    try:
+        return int(cut_id), ""
+    except ValueError:
+        raise ValueError(f"无效的Cut编号: {cut_id}")
 
 
 def format_cut_id(num: int, letter: str = "") -> str:
-    """格式化Cut编号
-
-    Args:
-        num: 数字部分
-        letter: 字母后缀
-
-    Returns:
-        str: 格式化后的Cut编号
-    """
+    """格式化Cut编号"""
     return f"{zero_pad(num, 3)}{letter}"
+
+
+# ================================ 项目注册管理器 ================================ #
+
+class ProjectRegistry:
+    """项目注册管理器"""
+
+    def __init__(self, app_settings: QSettings):
+        self.app_settings = app_settings
+        self.registry_path = self._get_registry_path()
+        self.projects: Dict[str, ProjectInfo] = {}
+        self.load_registry()
+
+    def _get_registry_path(self) -> Path:
+        """获取注册文件路径"""
+        default_path = self.app_settings.value("default_project_path", "")
+        if default_path and Path(default_path).exists():
+            settings_dir = Path(default_path) / PROJECT_SETTINGS_DIR
+            ensure_dir(settings_dir)
+            return settings_dir / PROJECT_REGISTRY_FILE
+        else:
+            # 使用应用数据目录
+            app_dir = Path.home() / ".cx_project_manager"
+            ensure_dir(app_dir)
+            return app_dir / PROJECT_REGISTRY_FILE
+
+    def load_registry(self):
+        """加载注册信息"""
+        if self.registry_path.exists():
+            try:
+                with open(self.registry_path, "r", encoding="utf-8") as f:
+                    data = json.load(f)
+                    self.projects = {
+                        name: ProjectInfo.from_dict(info)
+                        for name, info in data.items()
+                    }
+            except Exception as e:
+                print(f"加载项目注册信息失败: {e}")
+                self.projects = {}
+
+    def save_registry(self):
+        """保存注册信息"""
+        try:
+            data = {name: info.to_dict() for name, info in self.projects.items()}
+            with open(self.registry_path, "w", encoding="utf-8") as f:
+                json.dump(data, f, indent=4, ensure_ascii=False)
+        except Exception as e:
+            print(f"保存项目注册信息失败: {e}")
+
+    def register_project(self, project_config: Dict, project_path: Path):
+        """注册项目"""
+        project_name = project_config.get("project_name", "Unknown")
+
+        # 计算Episode信息
+        episodes = project_config.get("episodes", {})
+        episode_count = len(episodes)
+        episode_list = sorted(episodes.keys())
+
+        info = ProjectInfo(
+            project_name=project_name,
+            project_path=str(project_path),
+            config_path=str(project_path / "project_config.json"),
+            created_time=project_config.get("created_time", datetime.now().isoformat()),
+            episode_count=episode_count,
+            episode_list=episode_list,
+            no_episode=project_config.get("no_episode", False)
+        )
+
+        self.projects[project_name] = info
+        self.save_registry()
+
+    def unregister_project(self, project_name: str):
+        """注销项目"""
+        if project_name in self.projects:
+            del self.projects[project_name]
+            self.save_registry()
+
+    def update_access_time(self, project_name: str):
+        """更新访问时间"""
+        if project_name in self.projects:
+            self.projects[project_name].last_accessed = datetime.now().isoformat()
+            self.save_registry()
+
+    def get_all_projects(self) -> List[ProjectInfo]:
+        """获取所有项目"""
+        return sorted(self.projects.values(),
+                      key=lambda p: p.last_accessed,
+                      reverse=True)
+
+    def project_exists(self, project_name: str) -> bool:
+        """检查项目是否存在"""
+        return project_name in self.projects
+
+
+# ================================ 项目浏览器对话框 ================================ #
+
+class ProjectBrowserDialog(QDialog):
+    """项目浏览器对话框"""
+
+    project_selected = Signal(str)  # 项目路径信号
+
+    def __init__(self, registry: ProjectRegistry, parent=None):
+        super().__init__(parent)
+        self.registry = registry
+        self.setWindowTitle("项目浏览器")
+        self.setModal(True)
+        self.resize(800, 500)
+        self.setStyleSheet(QSS_THEME)
+        self._setup_ui()
+        self._load_projects()
+
+    def _setup_ui(self):
+        """设置UI"""
+        layout = QVBoxLayout(self)
+
+        # 工具栏
+        toolbar_layout = QHBoxLayout()
+
+        self.btn_refresh = QPushButton("刷新")
+        self.btn_refresh.clicked.connect(self._load_projects)
+        toolbar_layout.addWidget(self.btn_refresh)
+
+        self.btn_open = QPushButton("打开项目")
+        self.btn_open.clicked.connect(self._open_project)
+        self.btn_open.setEnabled(False)
+        toolbar_layout.addWidget(self.btn_open)
+
+        self.btn_delete = QPushButton("删除记录")
+        self.btn_delete.clicked.connect(self._delete_record)
+        self.btn_delete.setEnabled(False)
+        toolbar_layout.addWidget(self.btn_delete)
+
+        toolbar_layout.addStretch()
+
+        self.lbl_count = QLabel("项目数: 0")
+        toolbar_layout.addWidget(self.lbl_count)
+
+        layout.addLayout(toolbar_layout)
+
+        # 项目表格
+        self.table = QTableWidget()
+        self.table.setColumnCount(6)
+        self.table.setHorizontalHeaderLabels([
+            "项目名称", "Episode数", "创建时间", "最后访问", "路径", "状态"
+        ])
+
+        # 设置列宽
+        header = self.table.horizontalHeader()
+        header.setSectionResizeMode(0, QHeaderView.ResizeToContents)
+        header.setSectionResizeMode(1, QHeaderView.ResizeToContents)
+        header.setSectionResizeMode(2, QHeaderView.ResizeToContents)
+        header.setSectionResizeMode(3, QHeaderView.ResizeToContents)
+        header.setSectionResizeMode(4, QHeaderView.Stretch)
+        header.setSectionResizeMode(5, QHeaderView.ResizeToContents)
+
+        self.table.setSelectionBehavior(QAbstractItemView.SelectRows)
+        self.table.setAlternatingRowColors(True)
+        self.table.itemSelectionChanged.connect(self._on_selection_changed)
+        self.table.doubleClicked.connect(self._open_project)
+
+        layout.addWidget(self.table)
+
+        # 按钮
+        buttons = QDialogButtonBox(QDialogButtonBox.Close)
+        buttons.rejected.connect(self.reject)
+        layout.addWidget(buttons)
+
+    def _load_projects(self):
+        """加载项目列表"""
+        self.registry.load_registry()  # 重新加载以获取最新数据
+        projects = self.registry.get_all_projects()
+
+        self.table.setRowCount(len(projects))
+
+        for row, project in enumerate(projects):
+            # 项目名称
+            self.table.setItem(row, 0, QTableWidgetItem(project.project_name))
+
+            # Episode数
+            if project.no_episode:
+                ep_text = f"单集模式 ({len(project.episode_list)} 特殊)"
+            else:
+                ep_text = str(project.episode_count)
+            self.table.setItem(row, 1, QTableWidgetItem(ep_text))
+
+            # 创建时间
+            created = datetime.fromisoformat(project.created_time)
+            self.table.setItem(row, 2, QTableWidgetItem(created.strftime("%Y-%m-%d")))
+
+            # 最后访问
+            accessed = datetime.fromisoformat(project.last_accessed)
+            self.table.setItem(row, 3, QTableWidgetItem(accessed.strftime("%Y-%m-%d %H:%M")))
+
+            # 路径
+            path_item = QTableWidgetItem(project.project_path)
+            path_item.setToolTip(project.project_path)
+            self.table.setItem(row, 4, path_item)
+
+            # 状态
+            status = "正常" if Path(project.project_path).exists() else "路径不存在"
+            status_item = QTableWidgetItem(status)
+            if status == "路径不存在":
+                status_item.setForeground(QBrush(QColor("#F44336")))
+            else:
+                status_item.setForeground(QBrush(QColor("#4CAF50")))
+            self.table.setItem(row, 5, status_item)
+
+        self.lbl_count.setText(f"项目数: {len(projects)}")
+
+    def _on_selection_changed(self):
+        """选择改变时的处理"""
+        has_selection = len(self.table.selectedItems()) > 0
+        self.btn_open.setEnabled(has_selection)
+        self.btn_delete.setEnabled(has_selection)
+
+    def _open_project(self):
+        """打开选中的项目"""
+        current_row = self.table.currentRow()
+        if current_row >= 0:
+            project_path = self.table.item(current_row, 4).text()
+            if Path(project_path).exists():
+                self.project_selected.emit(project_path)
+                self.accept()
+            else:
+                QMessageBox.warning(self, "错误", "项目路径不存在")
+
+    def _delete_record(self):
+        """删除选中的记录"""
+        current_row = self.table.currentRow()
+        if current_row >= 0:
+            project_name = self.table.item(current_row, 0).text()
+
+            reply = QMessageBox.question(
+                self, "确认删除",
+                f"确定要从注册表中删除项目 '{project_name}' 的记录吗？\n"
+                "注意：这只会删除注册信息，不会删除实际的项目文件。",
+                QMessageBox.Yes | QMessageBox.No
+            )
+
+            if reply == QMessageBox.Yes:
+                self.registry.unregister_project(project_name)
+                self._load_projects()
 
 
 # ================================ 自定义控件 ================================ #
@@ -424,7 +597,6 @@ class SearchLineEdit(QLineEdit):
     """支持Esc键清除的搜索框"""
 
     def keyPressEvent(self, event):
-        """处理按键事件"""
         if event.key() == Qt.Key_Escape:
             self.clear()
         else:
@@ -445,30 +617,21 @@ class ReuseCutDialog(QDialog):
         self._setup_ui()
 
     def _setup_ui(self):
-        """设置UI"""
         layout = QVBoxLayout(self)
 
         # 说明
-        info_label = QLabel("请输入要合并为兼用卡的Cut编号，用逗号或换行分隔：")
-        info_label.setStyleSheet("padding: 10px; font-size: 14px;")
-        layout.addWidget(info_label)
-
-        # 示例
-        example_label = QLabel("示例：100, 102, 150, 151 或 100A, 100B, 100C")
-        example_label.setStyleSheet("color: #808080; padding: 0 10px 10px 10px;")
-        layout.addWidget(example_label)
+        layout.addWidget(QLabel("请输入要合并为兼用卡的Cut编号，用逗号或换行分隔："))
+        layout.addWidget(QLabel("示例：100, 102, 150, 151 或 100A, 100B, 100C"))
 
         # Cut输入框
         self.txt_cuts = QPlainTextEdit()
         self.txt_cuts.setPlaceholderText("输入Cut编号...")
         self.txt_cuts.setMaximumHeight(150)
+        self.txt_cuts.textChanged.connect(self._update_preview)
         layout.addWidget(self.txt_cuts)
 
         # 可用Cut列表
-        available_label = QLabel("可用的Cut列表：")
-        available_label.setStyleSheet("padding: 10px 10px 5px 10px;")
-        layout.addWidget(available_label)
-
+        layout.addWidget(QLabel("可用的Cut列表："))
         self.list_available = QListWidget()
         self.list_available.setMaximumHeight(120)
         self.list_available.setSelectionMode(QAbstractItemView.MultiSelection)
@@ -481,10 +644,7 @@ class ReuseCutDialog(QDialog):
         layout.addWidget(btn_add_selected)
 
         # 预览
-        preview_label = QLabel("预览：")
-        preview_label.setStyleSheet("padding: 10px 10px 5px 10px; font-weight: bold;")
-        layout.addWidget(preview_label)
-
+        layout.addWidget(QLabel("预览："))
         self.lbl_preview = QLabel("(请输入Cut编号)")
         self.lbl_preview.setStyleSheet("""
             QLabel {
@@ -499,53 +659,35 @@ class ReuseCutDialog(QDialog):
         layout.addWidget(self.lbl_preview)
 
         # 按钮
-        buttons = QDialogButtonBox(
-            QDialogButtonBox.Ok | QDialogButtonBox.Cancel
-        )
+        buttons = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
         buttons.button(QDialogButtonBox.Ok).setText("创建兼用卡")
         buttons.accepted.connect(self._validate_and_accept)
         buttons.rejected.connect(self.reject)
         layout.addWidget(buttons)
 
-        # 连接信号
-        self.txt_cuts.textChanged.connect(self._update_preview)
-
     def _load_available_cuts(self):
         """加载可用的Cut列表"""
         self.list_available.clear()
 
-        # 获取已存在的兼用卡
         existing_reuse_cuts = set()
         for reuse_cut in self.project_config.get("reuse_cuts", []):
             existing_reuse_cuts.update(reuse_cut["cuts"])
 
-        if self.episode_id:
-            # 特定Episode的Cuts
-            cuts = self.project_config.get("episodes", {}).get(self.episode_id, [])
-        else:
-            # 无Episode模式的Cuts
-            cuts = self.project_config.get("cuts", [])
+        cuts = (self.project_config.get("episodes", {}).get(self.episode_id, [])
+                if self.episode_id
+                else self.project_config.get("cuts", []))
 
-        # 排序并添加到列表（排除已经是兼用卡的）
         for cut in sorted(cuts):
             if cut not in existing_reuse_cuts:
                 self.list_available.addItem(cut)
 
     def _add_selected_cuts(self):
         """添加选中的Cut到输入框"""
-        selected_items = self.list_available.selectedItems()
-        if not selected_items:
-            return
-
-        current_text = self.txt_cuts.toPlainText().strip()
-        selected_cuts = [item.text() for item in selected_items]
-
-        if current_text:
-            new_text = current_text + ", " + ", ".join(selected_cuts)
-        else:
-            new_text = ", ".join(selected_cuts)
-
-        self.txt_cuts.setPlainText(new_text)
+        selected_cuts = [item.text() for item in self.list_available.selectedItems()]
+        if selected_cuts:
+            current_text = self.txt_cuts.toPlainText().strip()
+            new_text = f"{current_text}, {', '.join(selected_cuts)}" if current_text else ", ".join(selected_cuts)
+            self.txt_cuts.setPlainText(new_text)
 
     def _update_preview(self):
         """更新预览"""
@@ -554,30 +696,24 @@ class ReuseCutDialog(QDialog):
             self.lbl_preview.setText("(请输入Cut编号)")
             return
 
-        # 解析Cut编号
         cuts = self._parse_cuts(text)
         if not cuts:
             self.lbl_preview.setText("(无效的Cut编号)")
             return
 
-        # 排序
         sorted_cuts = self._sort_cuts(cuts)
-
-        # 获取实际项目名
         project_name = self.project_config.get("project_name", "项目名")
 
-        # 显示预览
-        preview_text = f"主Cut: {sorted_cuts[0]}\n"
-        preview_text += f"所有Cut: {', '.join(sorted_cuts)}\n"
-        preview_text += f"文件夹名: {sorted_cuts[0]}\n"
-        preview_text += f"文件名示例: {project_name}_{'_'.join(sorted_cuts)}_T1.psd"
+        preview_text = (f"主Cut: {sorted_cuts[0]}\n"
+                        f"所有Cut: {', '.join(sorted_cuts)}\n"
+                        f"文件夹名: {sorted_cuts[0]}\n"
+                        f"文件名示例: {project_name}_{'_'.join(sorted_cuts)}_T1.psd")
 
         self.lbl_preview.setText(preview_text)
 
     def _parse_cuts(self, text: str) -> List[str]:
         """解析Cut编号"""
         cuts = []
-        # 支持逗号、空格、换行分隔
         parts = re.split(r'[,，\s\n]+', text)
 
         for part in parts:
@@ -585,26 +721,17 @@ class ReuseCutDialog(QDialog):
             if not part:
                 continue
 
-            # 验证Cut格式
             if CUT_PATTERN.match(part):
-                # 格式化Cut编号
                 num, letter = parse_cut_id(part)
-                formatted = format_cut_id(num, letter)
-                cuts.append(formatted)
+                cuts.append(format_cut_id(num, letter))
             elif part.isdigit():
-                # 纯数字，自动补零
                 cuts.append(zero_pad(int(part), 3))
 
-        return list(set(cuts))  # 去重
+        return list(set(cuts))
 
     def _sort_cuts(self, cuts: List[str]) -> List[str]:
         """排序Cut编号"""
-
-        def cut_sort_key(cut: str):
-            num, letter = parse_cut_id(cut)
-            return (num, letter)
-
-        return sorted(cuts, key=cut_sort_key)
+        return sorted(cuts, key=lambda c: parse_cut_id(c))
 
     def _validate_and_accept(self):
         """验证并接受"""
@@ -618,23 +745,15 @@ class ReuseCutDialog(QDialog):
             QMessageBox.warning(self, "错误", "兼用卡至少需要2个Cut")
             return
 
-        # 检查Cut是否存在
-        if self.episode_id:
-            existing_cuts = self.project_config.get("episodes", {}).get(self.episode_id, [])
-        else:
-            existing_cuts = self.project_config.get("cuts", [])
+        existing_cuts = (self.project_config.get("episodes", {}).get(self.episode_id, [])
+                         if self.episode_id
+                         else self.project_config.get("cuts", []))
 
-        not_found = []
-        for cut in cuts:
-            if cut not in existing_cuts:
-                not_found.append(cut)
-
+        not_found = [cut for cut in cuts if cut not in existing_cuts]
         if not_found:
-            QMessageBox.warning(
-                self, "错误",
-                f"以下Cut不存在: {', '.join(not_found)}\n"
-                "请先创建这些Cut，或从输入中移除它们。"
-            )
+            QMessageBox.warning(self, "错误",
+                                f"以下Cut不存在: {', '.join(not_found)}\n"
+                                "请先创建这些Cut，或从输入中移除它们。")
             return
 
         # 检查是否已经是兼用卡
@@ -645,20 +764,15 @@ class ReuseCutDialog(QDialog):
                     existing_reuse.append(f"{cut} (已在兼用卡: {', '.join(reuse_cut['cuts'])})")
 
         if existing_reuse:
-            QMessageBox.warning(
-                self, "错误",
-                "以下Cut已经是兼用卡的一部分:\n" +
-                "\n".join(existing_reuse)
-            )
+            QMessageBox.warning(self, "错误",
+                                "以下Cut已经是兼用卡的一部分:\n" + "\n".join(existing_reuse))
             return
 
         self.accept()
 
     def get_cuts(self) -> List[str]:
         """获取Cut列表"""
-        text = self.txt_cuts.toPlainText().strip()
-        cuts = self._parse_cuts(text)
-        return self._sort_cuts(cuts)
+        return self._sort_cuts(self._parse_cuts(self.txt_cuts.toPlainText().strip()))
 
 
 class VersionConfirmDialog(QDialog):
@@ -666,55 +780,35 @@ class VersionConfirmDialog(QDialog):
 
     def __init__(self, material_type: str, current_version: int, parent=None):
         super().__init__(parent)
-        self.material_type = material_type
-        self.version = current_version
-        self.skip_confirmation = False
-
         self.setWindowTitle("确认版本号")
         self.setModal(True)
         self.setStyleSheet(QSS_THEME)
-        self._setup_ui()
 
-    def _setup_ui(self):
-        """设置UI"""
         layout = QVBoxLayout(self)
 
-        # 信息提示
-        info_text = f"检测到已存在的{self.material_type.upper()}文件，\n建议使用版本号: T{self.version}"
-        info_label = QLabel(info_text)
-        info_label.setStyleSheet("padding: 10px; font-size: 14px;")
-        layout.addWidget(info_label)
+        layout.addWidget(QLabel(f"检测到已存在的{material_type.upper()}文件，\n建议使用版本号: T{current_version}"))
 
-        # 版本号输入
         version_layout = QHBoxLayout()
         version_layout.addWidget(QLabel("版本号:"))
         self.spin_version = QSpinBox()
         self.spin_version.setPrefix("T")
         self.spin_version.setRange(1, 999)
-        self.spin_version.setValue(self.version)
-        self.spin_version.setMinimumWidth(100)
+        self.spin_version.setValue(current_version)
         version_layout.addWidget(self.spin_version)
-        version_layout.addStretch()
         layout.addLayout(version_layout)
 
-        # 不再询问选项
         self.chk_skip = QCheckBox("不再询问，自动使用推荐的版本号")
         layout.addWidget(self.chk_skip)
 
-        # 按钮
-        buttons = QDialogButtonBox(
-            QDialogButtonBox.Ok | QDialogButtonBox.Cancel
-        )
+        buttons = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
         buttons.accepted.connect(self.accept)
         buttons.rejected.connect(self.reject)
         layout.addWidget(buttons)
 
     def get_version(self) -> int:
-        """获取用户选择的版本号"""
         return self.spin_version.value()
 
     def should_skip_confirmation(self) -> bool:
-        """是否跳过后续确认"""
         return self.chk_skip.isChecked()
 
 
@@ -725,17 +819,14 @@ class FileItemDelegate(QStyledItemDelegate):
         super().__init__(parent)
         self.icon_size = 64
         self.padding = 8
-        # 调整字体设置
-        self.version_font = QFont("MiSans", 20, QFont.Bold)  # 版本号字体稍微小一点
-        self.name_font = QFont("MiSans", 12, QFont.Bold)  # 文件名加大加粗
-        self.time_font = QFont("MiSans", 9)  # 时间字体弱化
-        self.size_font = QFont("MiSans", 9)  # 大小字体弱化
+        self.version_font = QFont("MiSans", 20, QFont.Bold)
+        self.name_font = QFont("MiSans", 12, QFont.Bold)
+        self.time_font = QFont("MiSans", 9)
+        self.size_font = QFont("MiSans", 9)
 
     def paint(self, painter: QPainter, option: QStyleOptionViewItem, index):
-        """绘制列表项"""
         painter.save()
 
-        # 获取数据
         file_info = index.data(Qt.UserRole + 1)
         if not file_info:
             super().paint(painter, option, index)
@@ -744,108 +835,63 @@ class FileItemDelegate(QStyledItemDelegate):
 
         rect = option.rect
 
-        # 绘制选中背景
+        # 背景
         if option.state & QStyle.State_Selected:
-            painter.fillRect(rect, QColor("#0D7ACC"))  # 更深的蓝色
+            painter.fillRect(rect, QColor("#0D7ACC"))
         elif option.state & QStyle.State_MouseOver:
             painter.fillRect(rect, QColor("#3A3A3A"))
 
-        # 绘制图标
+        # 图标
         icon = index.data(Qt.DecorationRole)
         if icon:
-            icon_rect = QRect(
-                rect.left() + self.padding,
-                rect.top() + self.padding,
-                self.icon_size,
-                self.icon_size
-            )
+            icon_rect = QRect(rect.left() + self.padding, rect.top() + self.padding,
+                              self.icon_size, self.icon_size)
             icon.paint(painter, icon_rect)
 
         # 文本区域
         text_left = rect.left() + self.icon_size + self.padding * 2
         text_width = rect.width() - self.icon_size - self.padding * 3
 
-        # 如果有版本号，留出空间
         if file_info.version is not None:
-            text_width -= 80  # 为版本号留出更多空间
+            text_width -= 80
 
-        # 绘制文件名 - 加粗且更大
+        # 文件名
         painter.setFont(self.name_font)
-        if option.state & QStyle.State_Selected:
-            painter.setPen(Qt.white)
-        else:
-            painter.setPen(QColor("#FFFFFF"))  # 更亮的白色
-
-        # 如果是兼用卡，使用特殊颜色
-        if file_info.is_reuse_cut:
-            painter.setPen(QColor("#FFFFFF"))  # 橙色
-
-        name_rect = QRect(
-            text_left,
-            rect.top() + self.padding,
-            text_width,
-            25  # 增加高度
-        )
+        painter.setPen(QColor(
+            "#FFFFFF") if file_info.is_reuse_cut else Qt.white if option.state & QStyle.State_Selected else QColor(
+            "#FFFFFF"))
+        name_rect = QRect(text_left, rect.top() + self.padding, text_width, 25)
         painter.drawText(name_rect, Qt.AlignLeft | Qt.AlignVCenter, file_info.name)
 
-        # 绘制时间 - 弱化显示
+        # 时间
         painter.setFont(self.time_font)
-        if option.state & QStyle.State_Selected:
-            painter.setPen(QColor("#E0E0E0"))
-        else:
-            painter.setPen(QColor("#808080"))  # 更暗的灰色
-
+        painter.setPen(QColor("#E0E0E0") if option.state & QStyle.State_Selected else QColor("#808080"))
         time_text = file_info.modified_time.strftime("%Y-%m-%d %H:%M")
-        time_rect = QRect(
-            text_left,
-            rect.top() + self.padding + 30,
-            text_width,
-            20
-        )
+        time_rect = QRect(text_left, rect.top() + self.padding + 30, text_width, 20)
         painter.drawText(time_rect, Qt.AlignLeft | Qt.AlignVCenter, time_text)
 
-        # 绘制文件大小 - 弱化显示
+        # 文件大小
         if not file_info.is_folder and file_info.size > 0:
             painter.setFont(self.size_font)
             size_text = format_file_size(file_info.size)
-            size_rect = QRect(
-                text_left,
-                rect.top() + self.padding + 48,
-                text_width,
-                20
-            )
+            size_rect = QRect(text_left, rect.top() + self.padding + 48, text_width, 20)
             painter.drawText(size_rect, Qt.AlignLeft | Qt.AlignVCenter, size_text)
 
-        # 绘制版本号
+        # 版本号
         if file_info.version is not None and file_info.version_str:
             painter.setFont(self.version_font)
+            color = QColor("#FF9800") if file_info.is_aep and file_info.version == 0 else QColor("#4CAF50")
+            painter.setPen(color)
 
-            # 根据版本类型选择颜色
-            if file_info.is_aep:
-                if file_info.version == 0:
-                    painter.setPen(QColor("#FF9800"))  # 橙色 for T摄
-                else:
-                    painter.setPen(QColor("#4CAF50"))  # 绿色 for 本摄Vx
-            else:
-                painter.setPen(QColor("#4CAF50"))  # 绿色 for 普通版本
-
-            # 计算版本文字宽度来居中显示
-            version_text = file_info.version_str
             fm = QFontMetrics(self.version_font)
-            text_width = fm.horizontalAdvance(version_text)
-
-            version_rect = QRect(
-                rect.right() - text_width - 15,
-                rect.top() + rect.height() // 2 - 20,
-                text_width + 10,
-                40
-            )
-            painter.drawText(version_rect, Qt.AlignCenter, version_text)
+            text_width = fm.horizontalAdvance(file_info.version_str)
+            version_rect = QRect(rect.right() - text_width - 15, rect.top() + rect.height() // 2 - 20,
+                                 text_width + 10, 40)
+            painter.drawText(version_rect, Qt.AlignCenter, file_info.version_str)
 
         painter.restore()
 
     def sizeHint(self, option: QStyleOptionViewItem, index) -> QSize:
-        """返回项目大小"""
         return QSize(400, self.icon_size + self.padding * 2)
 
 
@@ -859,49 +905,24 @@ class DetailedFileListWidget(QListWidget):
         self.setUniformItemSizes(False)
         self.setAlternatingRowColors(False)
         self.setSelectionMode(QAbstractItemView.SingleSelection)
-
-        # 加载所有图标
         self._load_icons()
 
     def _load_icons(self):
-        """加载所有图标"""
+        """加载图标"""
         icon_base = Path("_imgs")
+        icon_types = [
+            'aep', 'psd', 'folder', 'image', 'video', 'file', 'clip',
+            'maya', '3dsmax', 'blender', 'c4d', 'fbx', 'pld', '3d',
+            'png_seq', 'no_render'
+        ]
 
-        # 文件类型图标
-        self.icons = {
-            'aep': self._load_icon(icon_base / "aep_icon.png"),
-            'psd': self._load_icon(icon_base / "psd_icon.png"),
-            'folder': self._load_icon(icon_base / "folder_icon.png"),
-            'image': self._load_icon(icon_base / "image_icon.png"),
-            'video': self._load_icon(icon_base / "video_icon.png"),
-            'file': self._load_icon(icon_base / "file_icon.png"),
-            'clip': self._load_icon(icon_base / "clip_icon.png"),
-            'maya': self._load_icon(icon_base / "maya_icon.png"),
-            '3dsmax': self._load_icon(icon_base / "3dsmax_icon.png"),
-            'blender': self._load_icon(icon_base / "blender_icon.png"),
-            'c4d': self._load_icon(icon_base / "c4d_icon.png"),
-            'fbx': self._load_icon(icon_base / "fbx_icon.png"),
-            'pld': self._load_icon(icon_base / "pld_icon.png"),
-            '3d': self._load_icon(icon_base / "3d_icon.png"),  # 通用3D图标
-            'png_seq': self._load_icon(icon_base / "png_seq_icon.png"),
-            'no_render': self._load_icon(icon_base / "no_render_icon.png"),
-        }
-
-        # 打印调试信息，检查哪些图标加载失败
-        for name, icon in self.icons.items():
-            if icon is None:
-                print(f"警告: 图标 {name} 加载失败，文件可能不存在: {icon_base / f'{name}_icon.png'}")
-
-    def _load_icon(self, path: Path) -> Optional[QIcon]:
-        """加载单个图标"""
-        if path.exists():
-            icon = QIcon(str(path))
-            # 验证图标是否真正加载成功
-            if not icon.isNull():
-                return icon
-            else:
-                print(f"警告: 图标文件存在但加载失败: {path}")
-        return None
+        self.icons = {}
+        for icon_type in icon_types:
+            icon_path = icon_base / f"{icon_type}_icon.png"
+            if icon_path.exists():
+                icon = QIcon(str(icon_path))
+                if not icon.isNull():
+                    self.icons[icon_type] = icon
 
     def add_file_item(self, file_info: FileInfo):
         """添加文件项"""
@@ -909,123 +930,86 @@ class DetailedFileListWidget(QListWidget):
         item.setData(Qt.UserRole, str(file_info.path))
         item.setData(Qt.UserRole + 1, file_info)
 
-        # 设置图标
         icon = self._get_file_icon(file_info)
         if icon:
             item.setIcon(icon)
         else:
-            # 如果没有获取到图标，尝试使用默认文件图标
-            default_icon = self.icons.get('file')
-            if default_icon:
-                item.setIcon(default_icon)
-            # 如果连默认图标都没有，创建一个空图标避免显示错误
-            else:
-                item.setIcon(QIcon())
+            item.setIcon(self.icons.get('file', QIcon()))
 
         self.addItem(item)
 
     def load_files(self, directory: Path, pattern: str = "*", expand_folders: bool = False):
-        """加载目录中的文件
-
-        Args:
-            directory: 目录路径
-            pattern: 文件匹配模式
-            expand_folders: 是否展开文件夹内容
-        """
+        """加载目录中的文件"""
         self.clear()
 
         if not directory.exists():
             return
 
-        # 收集文件信息
         files = []
         for file_path in directory.glob(pattern):
             if expand_folders and file_path.is_dir():
-                # 展开文件夹内容
                 for sub_file in file_path.rglob("*"):
                     if sub_file.is_file():
                         files.append(get_file_info(sub_file))
             else:
                 files.append(get_file_info(file_path))
 
-        # 按修改时间降序排序（最新的在前）
         files.sort(key=lambda f: f.modified_time, reverse=True)
 
-        # 添加到列表
         for file_info in files:
             self.add_file_item(file_info)
 
     def _get_file_icon(self, file_info: FileInfo) -> Optional[QIcon]:
         """获取文件图标"""
-        # 未渲染状态
         if file_info.is_no_render:
             return self.icons.get('no_render')
 
-        # 兼用卡文件仍然需要根据文件类型显示对应图标
-        # 不能因为是兼用卡就不显示文件类型图标
-
         if file_info.is_folder:
-            # PNG序列文件夹特殊处理
             if file_info.is_png_seq and file_info.first_png:
                 try:
-                    # 尝试加载第一张PNG作为缩略图
                     pixmap = QPixmap(str(file_info.first_png))
                     if not pixmap.isNull():
-                        scaled = pixmap.scaled(64, 64, Qt.KeepAspectRatio, Qt.SmoothTransformation)
-                        return QIcon(scaled)
+                        return QIcon(pixmap.scaled(64, 64, Qt.KeepAspectRatio, Qt.SmoothTransformation))
                 except:
                     pass
                 return self.icons.get('png_seq', self.icons.get('folder'))
             return self.icons.get('folder')
 
-        # 文件扩展名
         ext = file_info.path.suffix.lower()
 
-        # AEP文件
-        if ext == '.aep':
-            return self.icons.get('aep')
+        # 特定文件类型
+        ext_to_icon = {
+            '.aep': 'aep',
+            '.psd': 'psd',
+            '.clip': 'clip',
+            '.ma': 'maya', '.mb': 'maya',
+            '.max': '3dsmax', '.3ds': '3dsmax',
+            '.blend': 'blender',
+            '.c4d': 'c4d',
+            '.pld': 'pld'
+        }
 
-        # PSD文件
-        if ext == '.psd':
-            return self.icons.get('psd')
+        if ext in ext_to_icon:
+            return self.icons.get(ext_to_icon[ext], self.icons.get('3d' if ext in THREED_EXTENSIONS else 'file'))
 
-        # Clip文件
-        if ext == '.clip':
-            return self.icons.get('clip')
-
-        # 3D文件
-        if ext in ['.ma', '.mb']:
-            return self.icons.get('maya', self.icons.get('3d'))
-        if ext in ['.max', '.3ds']:
-            return self.icons.get('3dsmax', self.icons.get('3d'))
-        if ext == '.blend':
-            return self.icons.get('blender', self.icons.get('3d'))
-        if ext == '.c4d':
-            return self.icons.get('c4d', self.icons.get('3d'))
         if ext in ['.fbx', '.obj', '.dae', '.abc', '.usd', '.usda', '.usdc']:
             return self.icons.get('fbx', self.icons.get('3d'))
-        if ext == '.pld':
-            return self.icons.get('pld')
+
         if ext in THREED_EXTENSIONS:
             return self.icons.get('3d')
 
-        # 图片文件
         if ext in IMAGE_EXTENSIONS:
-            # 尝试加载缩略图
             try:
                 pixmap = QPixmap(str(file_info.path))
                 if not pixmap.isNull():
-                    scaled = pixmap.scaled(64, 64, Qt.KeepAspectRatio, Qt.SmoothTransformation)
-                    return QIcon(scaled)
+                    return QIcon(pixmap.scaled(64, 64, Qt.KeepAspectRatio, Qt.SmoothTransformation))
             except:
                 pass
             return self.icons.get('image')
 
-        # 视频文件
         if ext in VIDEO_EXTENSIONS:
             return self.icons.get('video')
 
-        # 默认文件图标
         return self.icons.get('file')
 
 
@@ -1035,26 +1019,21 @@ class BatchAepDialog(QDialog):
     def __init__(self, project_config: Dict, parent=None):
         super().__init__(parent)
         self.project_config = project_config
-        project_name = project_config.get("project_name", "未命名项目")
-        self.setWindowTitle(f"批量复制 AEP 模板 - {project_name}")
+        self.setWindowTitle(f"批量复制 AEP 模板 - {project_config.get('project_name', '未命名项目')}")
         self.setModal(True)
         self.resize(450, 350)
         self.setStyleSheet(QSS_THEME)
         self._setup_ui()
 
     def _setup_ui(self):
-        """设置UI"""
         layout = QVBoxLayout(self)
 
-        # 模板信息提示
-        info_label = QLabel()
+        # 模板信息
         template_count = self._get_template_count()
-        if template_count > 0:
-            info_label.setText(f"ℹ️ 找到 {template_count} 个 AEP 模板文件")
-            info_label.setStyleSheet("color: #03A9F4; padding: 8px;")
-        else:
-            info_label.setText("⚠️ 未找到 AEP 模板文件")
-            info_label.setStyleSheet("color: #FF9800; padding: 8px;")
+        info_text = (f"ℹ️ 找到 {template_count} 个 AEP 模板文件" if template_count > 0
+                     else "⚠️ 未找到 AEP 模板文件")
+        info_label = QLabel(info_text)
+        info_label.setStyleSheet(f"color: {'#03A9F4' if template_count > 0 else '#FF9800'}; padding: 8px;")
         layout.addWidget(info_label)
 
         # 选择范围
@@ -1066,47 +1045,36 @@ class BatchAepDialog(QDialog):
         self.radio_selected = QRadioButton("指定 Episode 和 Cut 范围")
 
         self.radio_group = QButtonGroup()
-        self.radio_group.addButton(self.radio_all, 0)
-        self.radio_group.addButton(self.radio_episode, 1)
-        self.radio_group.addButton(self.radio_selected, 2)
+        for i, radio in enumerate([self.radio_all, self.radio_episode, self.radio_selected]):
+            self.radio_group.addButton(radio, i)
+            scope_layout.addWidget(radio)
 
         self.radio_all.setChecked(True)
 
-        scope_layout.addWidget(self.radio_all)
-        scope_layout.addWidget(self.radio_episode)
-        scope_layout.addWidget(self.radio_selected)
-
         # Episode 选择
         ep_layout = QHBoxLayout()
-        self.lbl_episode = QLabel("Episode:")
         self.cmb_episode = QComboBox()
         self.cmb_episode.setEnabled(False)
-
-        # 填充Episode列表
-        episodes = self.project_config.get("episodes", {})
-        self.cmb_episode.addItems(sorted(episodes.keys()))
-
-        ep_layout.addWidget(self.lbl_episode)
+        self.cmb_episode.addItems(sorted(self.project_config.get("episodes", {}).keys()))
+        ep_layout.addWidget(QLabel("Episode:"))
         ep_layout.addWidget(self.cmb_episode)
         scope_layout.addLayout(ep_layout)
 
-        # Cut 范围选择
+        # Cut 范围
         cut_layout = QHBoxLayout()
-        self.lbl_cut_range = QLabel("Cut 范围:")
         self.spin_cut_from = QSpinBox()
         self.spin_cut_from.setRange(1, 999)
         self.spin_cut_from.setValue(1)
         self.spin_cut_from.setEnabled(False)
 
-        self.lbl_cut_to = QLabel("到")
         self.spin_cut_to = QSpinBox()
         self.spin_cut_to.setRange(1, 999)
         self.spin_cut_to.setValue(100)
         self.spin_cut_to.setEnabled(False)
 
-        cut_layout.addWidget(self.lbl_cut_range)
+        cut_layout.addWidget(QLabel("Cut 范围:"))
         cut_layout.addWidget(self.spin_cut_from)
-        cut_layout.addWidget(self.lbl_cut_to)
+        cut_layout.addWidget(QLabel("到"))
         cut_layout.addWidget(self.spin_cut_to)
         cut_layout.addStretch()
         scope_layout.addLayout(cut_layout)
@@ -1118,65 +1086,43 @@ class BatchAepDialog(QDialog):
         options_layout = QVBoxLayout(options_group)
 
         self.chk_overwrite = QCheckBox("覆盖已存在的文件")
-        self.chk_overwrite.setChecked(False)
-
         self.chk_skip_existing = QCheckBox("跳过已有 AEP 文件的 Cut")
         self.chk_skip_existing.setChecked(True)
-
         self.chk_skip_reuse = QCheckBox("跳过兼用卡")
         self.chk_skip_reuse.setChecked(True)
-        self.chk_skip_reuse.setToolTip("兼用卡已有自己的AEP文件，通常不需要复制模板")
 
-        options_layout.addWidget(self.chk_overwrite)
-        options_layout.addWidget(self.chk_skip_existing)
-        options_layout.addWidget(self.chk_skip_reuse)
+        for chk in [self.chk_overwrite, self.chk_skip_existing, self.chk_skip_reuse]:
+            options_layout.addWidget(chk)
 
         layout.addWidget(options_group)
 
         # 按钮
-        self.buttons = QDialogButtonBox(
-            QDialogButtonBox.Ok | QDialogButtonBox.Cancel
-        )
-        self.buttons.button(QDialogButtonBox.Ok).setText("开始复制")
-        self.buttons.button(QDialogButtonBox.Cancel).setText("取消")
-        self.buttons.accepted.connect(self.accept)
-        self.buttons.rejected.connect(self.reject)
-
-        layout.addWidget(self.buttons)
+        buttons = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
+        buttons.button(QDialogButtonBox.Ok).setText("开始复制")
+        buttons.accepted.connect(self.accept)
+        buttons.rejected.connect(self.reject)
+        layout.addWidget(buttons)
 
         # 连接信号
         self.radio_group.buttonClicked.connect(self._on_scope_changed)
-        self.chk_overwrite.toggled.connect(self._on_overwrite_changed)
+        self.chk_overwrite.toggled.connect(lambda c: self.chk_skip_existing.setChecked(False) if c else None)
 
     def _get_template_count(self) -> int:
-        """获取模板文件数量"""
-        if not hasattr(self.parent(), 'project_base') or not self.parent().project_base:
-            return 0
-
-        template_dir = self.parent().project_base / "07_master_assets" / "aep_templates"
-        if not template_dir.exists():
-            return 0
-
-        return len(list(template_dir.glob("*.aep")))
+        if hasattr(self.parent(), 'project_base') and self.parent().project_base:
+            template_dir = self.parent().project_base / "07_master_assets" / "aep_templates"
+            return len(list(template_dir.glob("*.aep"))) if template_dir.exists() else 0
+        return 0
 
     def _on_scope_changed(self, button):
-        """范围选择改变时的处理"""
         scope_id = self.radio_group.id(button)
         self.cmb_episode.setEnabled(scope_id >= 1)
         self.spin_cut_from.setEnabled(scope_id == 2)
         self.spin_cut_to.setEnabled(scope_id == 2)
 
-    def _on_overwrite_changed(self, checked):
-        """覆盖选项改变时的处理"""
-        if checked:
-            self.chk_skip_existing.setChecked(False)
-
     def get_settings(self) -> Dict:
-        """获取用户设置"""
         scope_id = self.radio_group.checkedId()
-
-        settings = {
-            "scope": scope_id,  # 0: all, 1: episode, 2: selected
+        return {
+            "scope": scope_id,
             "episode": self.cmb_episode.currentText() if scope_id >= 1 else None,
             "cut_from": self.spin_cut_from.value() if scope_id == 2 else None,
             "cut_to": self.spin_cut_to.value() if scope_id == 2 else None,
@@ -1184,8 +1130,6 @@ class BatchAepDialog(QDialog):
             "skip_existing": self.chk_skip_existing.isChecked(),
             "skip_reuse": self.chk_skip_reuse.isChecked(),
         }
-
-        return settings
 
 
 # ================================ 项目管理器类 ================================ #
@@ -1199,51 +1143,28 @@ class ProjectManager:
         self.paths = ProjectPaths()
 
     def create_project(self, project_name: str, base_folder: Path, no_episode: bool = False) -> bool:
-        """创建新项目
-
-        Args:
-            project_name: 项目名称
-            base_folder: 项目基础文件夹
-            no_episode: 是否为无Episode模式
-
-        Returns:
-            bool: 是否创建成功
-        """
+        """创建新项目"""
         self.project_base = base_folder / project_name
-
-        # 创建项目结构
         self._create_project_structure(no_episode)
 
-        # 初始化项目配置
         self.project_config = {
             "project_name": project_name,
             "project_path": str(self.project_base),
             "no_episode": no_episode,
             "episodes": {},
-            "cuts": [],  # 无 Episode 模式下的 cuts
-            "reuse_cuts": [],  # 兼用卡信息
+            "cuts": [],
+            "reuse_cuts": [],
             "created_time": datetime.now().isoformat(),
             "last_modified": datetime.now().isoformat(),
             "paths": self.paths.__dict__
         }
 
-        # 保存配置
         self.save_config()
-
-        # 创建README
         self._create_readme()
-
         return True
 
     def load_project(self, project_path: Path) -> bool:
-        """加载项目
-
-        Args:
-            project_path: 项目路径
-
-        Returns:
-            bool: 是否加载成功
-        """
+        """加载项目"""
         config_file = project_path / "project_config.json"
 
         if not config_file.exists():
@@ -1254,14 +1175,11 @@ class ProjectManager:
                 self.project_config = json.load(f)
             self.project_base = project_path
 
-            # 确保有reuse_cuts字段（兼容旧版本）
+            # 兼容性处理
             if "reuse_cuts" not in self.project_config:
-                # 尝试从旧版本的reuse_cards迁移
+                self.project_config["reuse_cuts"] = self.project_config.get("reuse_cards", [])
                 if "reuse_cards" in self.project_config:
-                    self.project_config["reuse_cuts"] = self.project_config["reuse_cards"]
                     del self.project_config["reuse_cards"]
-                else:
-                    self.project_config["reuse_cuts"] = []
 
             return True
         except Exception as e:
@@ -1274,48 +1192,33 @@ class ProjectManager:
             return
 
         self.project_config["last_modified"] = datetime.now().isoformat()
-
         config_file = self.project_base / "project_config.json"
+
         with open(config_file, "w", encoding="utf-8") as f:
             json.dump(self.project_config, f, indent=4, ensure_ascii=False)
 
     def _create_project_structure(self, no_episode: bool):
         """创建项目目录结构"""
-        # 基础参考目录
-        ref_dirs = [
+        dirs = [
             "00_reference_project/character_design",
             "00_reference_project/art_design",
             "00_reference_project/concept_art",
             "00_reference_project/storyboard",
             "00_reference_project/docs",
             "00_reference_project/other_design",
-        ]
-
-        # 渲染和资源目录
-        asset_dirs = [
             "06_render",
             "07_master_assets/fonts",
             "07_master_assets/logo",
             "07_master_assets/fx_presets",
             "07_master_assets/aep_templates",
-        ]
-
-        # 工具目录
-        tool_dirs = [
             "08_tools/ae_scripts",
             "08_tools/python",
             "08_tools/config",
-        ]
-
-        # 临时和其他目录
-        other_dirs = [
             "98_tmp",
             "99_other",
         ]
 
-        # 创建所有目录
-        all_dirs = ref_dirs + asset_dirs + tool_dirs + other_dirs
-        for dir_path in all_dirs:
+        for dir_path in dirs:
             ensure_dir(self.project_base / dir_path)
 
     def _create_readme(self):
@@ -1326,59 +1229,40 @@ class ProjectManager:
 
 ## 项目结构说明
 
-### 项目根目录
 - `00_reference_project/` - 全项目通用参考资料
 - `01_vfx/` - VFX/AE 制作文件
 - `02_3dcg/` - 3DCG 制作文件（按需创建）
 - `06_render/` - 最终渲染输出
 - `07_master_assets/` - 共用素材
-  - `aep_templates/` - AE 项目模板
-  - `fonts/` - 字体文件
-  - `logo/` - Logo 素材
-  - `fx_presets/` - 特效预设
 - `08_tools/` - 自动化脚本与工具
 - `98_tmp/` - 临时文件
 - `99_other/` - 其他文件
 
 ## 项目模式
-
 {'单集/PV 模式' if self.project_config.get('no_episode', False) else 'Episode 模式'}
 
 ## 使用说明
-
 请使用 CX Project Manager 管理本项目。
 """
         (self.project_base / "README.md").write_text(readme_content, encoding="utf-8")
 
     def create_episode(self, ep_type: str, ep_identifier: str = "") -> Tuple[bool, str]:
-        """创建Episode
-
-        Args:
-            ep_type: Episode类型
-            ep_identifier: Episode标识（可选）
-
-        Returns:
-            Tuple[bool, str]: (是否成功, Episode ID或错误信息)
-        """
+        """创建Episode"""
         # 构建 Episode ID
         if ep_type == "ep" and ep_identifier and ep_identifier.isdigit():
             ep_id = f"ep{zero_pad(int(ep_identifier), 2)}"
         elif ep_identifier:
-            safe_identifier = ep_identifier.replace(" ", "_").replace("/", "_").replace("\\", "_")
-            if ep_type and ep_type != ep_identifier.lower():
-                ep_id = f"{ep_type}_{safe_identifier}"
-            else:
-                ep_id = safe_identifier
+            safe_identifier = re.sub(r'[/\\]', '_', ep_identifier.replace(" ", "_"))
+            ep_id = f"{ep_type}_{safe_identifier}" if ep_type and ep_type != ep_identifier.lower() else safe_identifier
         else:
             ep_id = ep_type
 
-        # 检查是否已存在
         if ep_id in self.project_config.get("episodes", {}):
             return False, f"Episode '{ep_id}' 已存在"
 
-        # 创建目录结构
+        # 创建目录
         ep_path = self.project_base / ep_id
-        ep_dirs = [
+        dirs = [
             "00_reference/storyboard",
             "00_reference/script",
             "00_reference/director_notes",
@@ -1388,14 +1272,11 @@ class ProjectManager:
             "05_output_mixdown",
         ]
 
-        for dir_path in ep_dirs:
+        for dir_path in dirs:
             ensure_dir(ep_path / dir_path)
 
-        # 在06_render目录下创建对应的Episode文件夹
-        render_ep_path = self.project_base / "06_render" / ep_id
-        ensure_dir(render_ep_path)
+        ensure_dir(self.project_base / "06_render" / ep_id)
 
-        # 更新配置
         if "episodes" not in self.project_config:
             self.project_config["episodes"] = {}
         self.project_config["episodes"][ep_id] = []
@@ -1404,16 +1285,7 @@ class ProjectManager:
         return True, ep_id
 
     def create_cut(self, cut_num: str, episode_id: str = None) -> Tuple[bool, str]:
-        """创建Cut
-
-        Args:
-            cut_num: Cut编号
-            episode_id: Episode ID（可选）
-
-        Returns:
-            Tuple[bool, str]: (是否成功, 错误信息)
-        """
-        # 解析Cut编号
+        """创建Cut"""
         try:
             num_part, letter_part = parse_cut_id(cut_num)
             cut_id = format_cut_id(num_part, letter_part)
@@ -1421,20 +1293,16 @@ class ProjectManager:
             return False, "请输入有效的 Cut 编号（数字或数字+字母）"
 
         if self.project_config.get("no_episode", False) and not episode_id:
-            # 无 Episode 模式
             if cut_id in self.project_config.get("cuts", []):
                 return False, f"Cut {cut_id} 已存在"
 
             cut_path = self.project_base / "01_vfx" / cut_id
             self._create_cut_structure(cut_path, episode_id=None)
 
-            # 更新配置
             if "cuts" not in self.project_config:
                 self.project_config["cuts"] = []
             self.project_config["cuts"].append(cut_id)
-
         else:
-            # 有 Episode 模式或单集模式下的特殊Episode
             if not episode_id:
                 return False, "请选择 Episode"
 
@@ -1446,8 +1314,6 @@ class ProjectManager:
 
             cut_path = self.project_base / episode_id / "01_vfx" / cut_id
             self._create_cut_structure(cut_path, episode_id=episode_id)
-
-            # 更新配置
             self.project_config["episodes"][episode_id].append(cut_id)
 
         self.save_config()
@@ -1455,170 +1321,93 @@ class ProjectManager:
 
     def _create_cut_structure(self, cut_path: Path, episode_id: Optional[str] = None):
         """创建Cut目录结构"""
-        # 创建Cut内部子目录
-        subdirs = ["cell", "bg", "prerender"]
-        for subdir in subdirs:
+        for subdir in ["cell", "bg", "prerender"]:
             ensure_dir(cut_path / subdir)
 
-        # 获取cut_id
         cut_id = cut_path.name
         proj_name = self.project_base.name
 
-        # 创建render目录结构
-        if episode_id:
-            render_path = self.project_base / "06_render" / episode_id / cut_id
-        else:
-            render_path = self.project_base / "06_render" / cut_id
+        # 创建render目录
+        render_path = (self.project_base / "06_render" / episode_id / cut_id if episode_id
+                       else self.project_base / "06_render" / cut_id)
 
-        # 创建render子目录
-        render_subdirs = ["png_seq", "prores", "mp4"]
-        for subdir in render_subdirs:
+        for subdir in ["png_seq", "prores", "mp4"]:
             ensure_dir(render_path / subdir)
 
-        # 复制AEP模板（如果存在）
+        # 复制AEP模板
         template_dir = self.project_base / "07_master_assets" / "aep_templates"
         if template_dir.exists():
             for template in template_dir.glob("*.aep"):
-                # 保留模板的原始文件名中的版本号或其他信息
                 template_stem = template.stem
 
-                # 构建新文件名
                 if episode_id:
                     ep_part = episode_id.upper()
-                    if '_v' in template_stem:
-                        version_part = template_stem[template_stem.rfind('_v'):]
-                        aep_name = f"{proj_name}_{ep_part}_{cut_id}{version_part}{template.suffix}"
-                    else:
-                        aep_name = f"{proj_name}_{ep_part}_{cut_id}_v0{template.suffix}"
+                    version_part = template_stem[template_stem.rfind('_v'):] if '_v' in template_stem else "_v0"
+                    aep_name = f"{proj_name}_{ep_part}_{cut_id}{version_part}{template.suffix}"
                 else:
-                    if '_v' in template_stem:
-                        version_part = template_stem[template_stem.rfind('_v'):]
-                        aep_name = f"{proj_name}_{cut_id}{version_part}{template.suffix}"
-                    else:
-                        aep_name = f"{proj_name}_{cut_id}_v0{template.suffix}"
+                    version_part = template_stem[template_stem.rfind('_v'):] if '_v' in template_stem else "_v0"
+                    aep_name = f"{proj_name}_{cut_id}{version_part}{template.suffix}"
 
-                dst = cut_path / aep_name
-                copy_file_safe(template, dst)
+                copy_file_safe(template, cut_path / aep_name)
 
     def create_reuse_cut(self, cuts: List[str], episode_id: Optional[str] = None) -> Tuple[bool, str]:
-        """创建兼用卡
-
-        Args:
-            cuts: Cut编号列表
-            episode_id: Episode ID（可选）
-
-        Returns:
-            Tuple[bool, str]: (是否成功, 消息)
-        """
+        """创建兼用卡"""
         if len(cuts) < 2:
             return False, "兼用卡至少需要2个Cut"
 
-        # 排序Cut
         sorted_cuts = sorted(cuts, key=lambda c: parse_cut_id(c))
         main_cut = sorted_cuts[0]
 
-        # 创建兼用cut对象
         reuse_cut = ReuseCut(
             cuts=sorted_cuts,
             main_cut=main_cut,
             episode_id=episode_id
         )
 
-        # 获取各Cut的路径
-        cut_paths = []
-        for cut in sorted_cuts:
-            if episode_id:
-                cut_path = self.project_base / episode_id / "01_vfx" / cut
-            else:
-                cut_path = self.project_base / "01_vfx" / cut
-            cut_paths.append(cut_path)
-
-        # 主Cut路径
-        main_path = cut_paths[0]
-
         # 合并文件到主Cut
-        for i, cut_path in enumerate(cut_paths[1:], 1):
+        base_path = self.project_base / episode_id if episode_id else self.project_base
+        main_path = base_path / "01_vfx" / main_cut
+
+        for cut in sorted_cuts[1:]:
+            cut_path = base_path / "01_vfx" / cut
             if cut_path.exists():
-                # 移动文件到主Cut
+                # 移动文件
                 for item in cut_path.iterdir():
                     if item.is_file():
-                        # 如果目标文件已存在，跳过
                         dst = main_path / item.name
                         if not dst.exists():
                             shutil.move(str(item), str(dst))
                     elif item.is_dir():
-                        # 合并文件夹内容
                         dst_dir = main_path / item.name
                         if not dst_dir.exists():
                             shutil.move(str(item), str(dst_dir))
                         else:
-                            # 如果目标文件夹存在，合并内容
                             for sub_item in item.iterdir():
                                 dst_sub = dst_dir / sub_item.name
                                 if not dst_sub.exists():
                                     shutil.move(str(sub_item), str(dst_sub))
 
-                # 删除空的Cut文件夹
                 try:
                     shutil.rmtree(cut_path)
                 except Exception as e:
                     print(f"删除文件夹失败 {cut_path}: {e}")
 
-        # 删除非主Cut的单独AEP文件（在主Cut文件夹中）
+        # 重命名AEP文件
         proj_name = self.project_base.name
-        for cut in sorted_cuts[1:]:
-            # 构建可能的AEP文件名模式
-            if episode_id:
-                ep_part = episode_id.upper() + "_"
-            else:
-                ep_part = ""
-
-            # 删除该Cut的单独AEP文件
-            for aep_file in main_path.glob("*.aep"):
-                # 检查是否是该Cut的单独文件（不是兼用卡格式）
-                if f"_{ep_part}{cut}_" in aep_file.stem and not any(
-                        f"_{other_cut}_" in aep_file.stem or f"_{other_cut}." in aep_file.stem
-                        for other_cut in sorted_cuts if other_cut != cut
-                ):
-                    try:
-                        aep_file.unlink()
-                        print(f"删除单独AEP文件: {aep_file}")
-                    except Exception as e:
-                        print(f"删除AEP文件失败: {e}")
-
-        # 重命名主Cut文件夹中的AEP文件为兼用卡格式
         cuts_str = "_".join(sorted_cuts)
 
         for aep_file in main_path.glob("*.aep"):
-            # 检查是否已经是兼用卡格式
-            if cuts_str in aep_file.stem:
-                continue
+            if cuts_str not in aep_file.stem:
+                version = extract_version_from_filename(aep_file.stem)
+                version_str = f"_v{version}" if version is not None else "_v0"
 
-            # 提取版本号
-            version = extract_version_from_filename(aep_file.stem)
-            if version is not None:
-                version_str = f"_v{version}"
-            else:
-                version_str = "_v0"
+                ep_part = f"{episode_id.upper()}_" if episode_id else ""
+                new_name = f"{proj_name}_{ep_part}{cuts_str}{version_str}{aep_file.suffix}"
+                new_path = aep_file.parent / new_name
 
-            # 构建新文件名
-            if episode_id:
-                ep_part = episode_id.upper() + "_"
-            else:
-                ep_part = ""
+                if not new_path.exists():
+                    aep_file.rename(new_path)
 
-            new_name = f"{proj_name}_{ep_part}{cuts_str}{version_str}{aep_file.suffix}"
-            new_path = aep_file.parent / new_name
-
-            # 重命名文件
-            if not new_path.exists():
-                aep_file.rename(new_path)
-
-        # 更新配置
-        if "reuse_cards" not in self.project_config:
-            self.project_config["reuse_cards"] = []
-
-        # 更新配置
         if "reuse_cuts" not in self.project_config:
             self.project_config["reuse_cuts"] = []
 
@@ -1628,14 +1417,7 @@ class ProjectManager:
         return True, f"成功创建兼用卡: {cuts_str}"
 
     def get_reuse_cut_for_cut(self, cut_id: str) -> Optional[ReuseCut]:
-        """获取包含指定Cut的兼用卡
-
-        Args:
-            cut_id: Cut编号
-
-        Returns:
-            Optional[ReuseCut]: 兼用cut对象，如果不存在则返回None
-        """
+        """获取包含指定Cut的兼用卡"""
         for cut_data in self.project_config.get("reuse_cuts", []):
             cut = ReuseCut.from_dict(cut_data)
             if cut.contains_cut(cut_id):
@@ -1643,19 +1425,10 @@ class ProjectManager:
         return None
 
     def get_next_version(self, target_dir: Path, pattern: str) -> int:
-        """获取下一个版本号
-
-        Args:
-            target_dir: 目标目录
-            pattern: 文件名模式（不含版本号部分）
-
-        Returns:
-            int: 下一个版本号
-        """
+        """获取下一个版本号"""
         if not target_dir.exists():
             return 1
 
-        # 查找所有匹配的文件
         max_version = 0
         for file in target_dir.iterdir():
             version = extract_version_from_filename(file.stem)
@@ -1670,35 +1443,28 @@ class ProjectManager:
 class CXProjectManager(QMainWindow):
     """动画项目管理器主窗口"""
 
-    project_changed = Signal()  # 项目变更信号
+    project_changed = Signal()
 
     def __init__(self):
         super().__init__()
-        # 使用版本信息
+
+        # 版本信息
         version = version_info.get("version", "2.2")
         build = version_info.get("build-version", "")
-        if build:
-            version_str = f"{version} {build}"
-        else:
-            version_str = version
+        version_str = f"{version} {build}" if build else version
 
         self.setWindowTitle(f"CX Project Manager - 动画项目管理工具 v{version_str}")
         self.resize(1300, 750)
 
-        # 初始化项目管理器
+        # 初始化
         self.project_manager = ProjectManager()
-
-        # 初始化变量
         self.project_base: Optional[Path] = None
         self.project_config: Optional[Dict] = None
         self.app_settings = QSettings("CXStudio", "ProjectManager")
+        self.project_registry = ProjectRegistry(self.app_settings)
 
         # 版本确认跳过设置
-        self.skip_version_confirmation = {
-            "bg": False,
-            "cell": False,
-            "3dcg": False
-        }
+        self.skip_version_confirmation = {"bg": False, "cell": False, "3dcg": False}
 
         # 初始化控件变量
         self._init_widget_variables()
@@ -1711,35 +1477,32 @@ class CXProjectManager(QMainWindow):
         # 应用样式
         self.setStyleSheet(QSS_THEME)
 
-        # 初始状态设置
+        # 初始状态
         self._set_initial_state()
-
-        # 加载软件配置
         self._load_app_settings()
 
         # 连接信号
         self.project_changed.connect(self._on_project_changed)
 
     def _init_widget_variables(self):
-        """初始化所有控件变量"""
-        # 项目管理控件
+        """初始化控件变量"""
+        # 项目管理
         self.lbl_project_path = None
         self.txt_project_name = None
         self.btn_new_project = None
         self.btn_open_project = None
         self.chk_no_episode = None
 
-        # Episode管理控件
+        # Episode管理
         self.episode_group = None
         self.cmb_episode_type = None
         self.txt_episode = None
         self.btn_create_episode = None
         self.btn_batch_episode = None
-        self.lbl_batch_ep = None
         self.spin_ep_from = None
         self.spin_ep_to = None
 
-        # Cut管理控件
+        # Cut管理
         self.cmb_cut_episode = None
         self.txt_cut = None
         self.btn_create_cut = None
@@ -1748,46 +1511,28 @@ class CXProjectManager(QMainWindow):
         self.spin_cut_to = None
         self.btn_create_reuse_cut = None
 
-        # 素材导入控件
-        self.lbl_target_episode = None
+        # 素材导入
         self.cmb_target_episode = None
         self.cmb_target_cut = None
-        self.txt_bg_path = None
-        self.txt_cell_path = None
-        self.txt_3dcg_path = None
-        self.txt_timesheet_path = None
-        self.btn_browse_bg = None
-        self.btn_browse_cell = None
-        self.btn_browse_3dcg = None
-        self.btn_browse_timesheet = None
-        self.btn_import_single = None
-        self.btn_import_all = None
-        self.btn_copy_aep = None
-        self.btn_batch_copy_aep = None
+        self.material_paths = {}  # 存储素材路径输入框
+        self.material_buttons = {}  # 存储浏览按钮
 
-        # 树和Tab控件
+        # 其他控件
         self.tree = None
         self.tabs = None
-
-        # 浏览器相关控件
         self.txt_project_stats = None
         self.browser_tree = None
         self.file_tabs = None
-        self.vfx_list: Optional[DetailedFileListWidget] = None
-        self.cell_list: Optional[DetailedFileListWidget] = None
-        self.bg_list: Optional[DetailedFileListWidget] = None
-        self.render_list: Optional[DetailedFileListWidget] = None
-        self.cg_list: Optional[DetailedFileListWidget] = None
+        self.file_lists = {}  # 存储文件列表
         self.lbl_current_cut = None
         self.txt_cut_search = None
-        self.btn_clear_search = None
 
         # 状态变量
         self.current_cut_id = None
         self.current_episode_id = None
         self.current_path = None
 
-        # 菜单相关
+        # 菜单
         self.recent_menu = None
         self.statusbar = None
 
@@ -1799,45 +1544,42 @@ class CXProjectManager(QMainWindow):
         main_layout = QVBoxLayout(central)
         main_layout.setContentsMargins(8, 8, 8, 0)
 
-        # 创建Tab控件
         self.tabs = QTabWidget()
         main_layout.addWidget(self.tabs)
 
         # Tab 1: 项目管理
         management_tab = self._create_management_tab()
+        self.tabs.addTab(management_tab, "📁 项目管理")
 
         # Tab 2: 项目浏览
         browser_tab = self._create_browser_tab()
-
-        # 添加Tab
-        self.tabs.addTab(management_tab, "📁 项目管理")
         self.tabs.addTab(browser_tab, "📊 项目浏览")
 
-        # 设置默认Tab
         self.tabs.setCurrentIndex(0)
 
     def _create_management_tab(self) -> QWidget:
         """创建项目管理Tab"""
-        management_tab = QWidget()
-        management_layout = QHBoxLayout(management_tab)
+        tab = QWidget()
+        layout = QHBoxLayout(tab)
 
-        # 创建分割器
         splitter = QSplitter(Qt.Horizontal)
-        management_layout.addWidget(splitter)
+        layout.addWidget(splitter)
 
         # 左侧控制面板
         left_panel = self._create_left_panel()
         splitter.addWidget(left_panel)
 
         # 右侧目录树
-        self.tree = self._create_tree_widget()
+        self.tree = QTreeWidget()
+        self.tree.setHeaderLabel("项目结构")
+        self.tree.setAlternatingRowColors(True)
+        self.tree.itemDoubleClicked.connect(self._on_tree_item_double_clicked)
         splitter.addWidget(self.tree)
 
-        # 设置分割比例
         splitter.setStretchFactor(0, 2)
         splitter.setStretchFactor(1, 3)
 
-        return management_tab
+        return tab
 
     def _create_left_panel(self) -> QWidget:
         """创建左侧控制面板"""
@@ -1856,293 +1598,259 @@ class CXProjectManager(QMainWindow):
         # 素材导入组
         layout.addWidget(self._create_import_group())
 
-        # 添加弹性空间
         layout.addStretch()
 
         return panel
 
     def _create_project_group(self) -> QGroupBox:
         """创建项目管理组"""
-        project_group = QGroupBox("📁 项目管理")
-        project_layout = QVBoxLayout(project_group)
+        group = QGroupBox("📁 项目管理")
+        layout = QVBoxLayout(group)
 
         # 当前项目路径
         self.lbl_project_path = QLabel("未打开项目")
         self.lbl_project_path.setStyleSheet("color: #999; font-style: italic;")
-        project_layout.addWidget(self.lbl_project_path)
+        layout.addWidget(self.lbl_project_path)
 
-        # 新建项目输入框和按钮
-        new_project_layout = QHBoxLayout()
+        # 新建项目
+        new_layout = QHBoxLayout()
         self.txt_project_name = QLineEdit()
         self.txt_project_name.setPlaceholderText("输入项目名称")
         self.txt_project_name.returnPressed.connect(self.new_project)
         self.btn_new_project = QPushButton("新建")
         self.btn_new_project.clicked.connect(self.new_project)
+        new_layout.addWidget(self.txt_project_name)
+        new_layout.addWidget(self.btn_new_project)
+        layout.addLayout(new_layout)
 
-        new_project_layout.addWidget(self.txt_project_name)
-        new_project_layout.addWidget(self.btn_new_project)
-        project_layout.addLayout(new_project_layout)
-
-        # 打开项目按钮
+        # 打开项目
         self.btn_open_project = QPushButton("打开项目")
         self.btn_open_project.clicked.connect(self.open_project)
-        project_layout.addWidget(self.btn_open_project)
+        layout.addWidget(self.btn_open_project)
 
         # Episode 模式选择
         self.chk_no_episode = QCheckBox("单集/PV 模式（支持特殊 Episode）")
         self.chk_no_episode.setToolTip("单集模式下可以创建 op/ed/pv 等特殊类型，但不能创建标准集数 ep")
         self.chk_no_episode.stateChanged.connect(self._toggle_episode_mode)
-        project_layout.addWidget(self.chk_no_episode)
+        layout.addWidget(self.chk_no_episode)
 
-        return project_group
+        return group
 
     def _create_episode_group(self) -> QGroupBox:
         """创建Episode管理组"""
         self.episode_group = QGroupBox("🎬 Episode 管理")
-        episode_layout = QVBoxLayout(self.episode_group)
+        layout = QVBoxLayout(self.episode_group)
 
-        # Episode 类型和编号输入
-        single_ep_layout = QHBoxLayout()
+        # Episode创建
+        single_layout = QHBoxLayout()
 
-        # Episode 类型下拉框
         self.cmb_episode_type = QComboBox()
         self.cmb_episode_type.setEditable(True)
         self.cmb_episode_type.addItems(EpisodeType.get_all_types())
         self.cmb_episode_type.setCurrentText("ep")
         self.cmb_episode_type.currentTextChanged.connect(self._on_episode_type_changed)
 
-        # Episode 编号输入
         self.txt_episode = QLineEdit()
         self.txt_episode.setPlaceholderText("编号或名称 (可留空)")
 
         self.btn_create_episode = QPushButton("创建")
         self.btn_create_episode.clicked.connect(self.create_episode)
 
-        single_ep_layout.addWidget(QLabel("类型:"))
-        single_ep_layout.addWidget(self.cmb_episode_type)
-        single_ep_layout.addWidget(self.txt_episode)
-        single_ep_layout.addWidget(self.btn_create_episode)
-        episode_layout.addLayout(single_ep_layout)
+        single_layout.addWidget(QLabel("类型:"))
+        single_layout.addWidget(self.cmb_episode_type)
+        single_layout.addWidget(self.txt_episode)
+        single_layout.addWidget(self.btn_create_episode)
+        layout.addLayout(single_layout)
 
-        # 批量创建 Episode（仅对数字编号有效）
-        self.lbl_batch_ep = QLabel("批量创建 (仅限数字编号):")
-        episode_layout.addWidget(self.lbl_batch_ep)
+        # 批量创建
+        layout.addWidget(QLabel("批量创建 (仅限数字编号):"))
 
-        batch_ep_layout = QHBoxLayout()
-        batch_ep_layout.addWidget(QLabel("从:"))
+        batch_layout = QHBoxLayout()
+        batch_layout.addWidget(QLabel("从:"))
         self.spin_ep_from = QSpinBox()
         self.spin_ep_from.setRange(1, 999)
         self.spin_ep_from.setValue(1)
-        batch_ep_layout.addWidget(self.spin_ep_from)
-        batch_ep_layout.addWidget(QLabel("到:"))
+        batch_layout.addWidget(self.spin_ep_from)
+
+        batch_layout.addWidget(QLabel("到:"))
         self.spin_ep_to = QSpinBox()
         self.spin_ep_to.setRange(1, 999)
         self.spin_ep_to.setValue(12)
-        batch_ep_layout.addWidget(self.spin_ep_to)
+        batch_layout.addWidget(self.spin_ep_to)
+
         self.btn_batch_episode = QPushButton("批量创建")
         self.btn_batch_episode.clicked.connect(self.batch_create_episodes)
-        batch_ep_layout.addWidget(self.btn_batch_episode)
-        episode_layout.addLayout(batch_ep_layout)
+        batch_layout.addWidget(self.btn_batch_episode)
+
+        layout.addLayout(batch_layout)
 
         return self.episode_group
 
     def _create_cut_group(self) -> QGroupBox:
         """创建Cut管理组"""
-        cut_group = QGroupBox("✂️ Cut 管理")
-        cut_layout = QVBoxLayout(cut_group)
+        group = QGroupBox("✂️ Cut 管理")
+        layout = QVBoxLayout(group)
 
-        # 创建单个 Cut
-        single_cut_layout = QHBoxLayout()
+        # 单个Cut创建
+        single_layout = QHBoxLayout()
         self.cmb_cut_episode = QComboBox()
         self.cmb_cut_episode.setPlaceholderText("选择 Episode")
-        self.cmb_cut_episode.setToolTip("选择要创建Cut的Episode")
+
         self.txt_cut = QLineEdit()
         self.txt_cut.setPlaceholderText("Cut编号(可带字母)")
         self.txt_cut.setToolTip("支持纯数字或数字+字母，如: 100, 100A")
+
         self.btn_create_cut = QPushButton("创建")
         self.btn_create_cut.clicked.connect(lambda: self.create_cut())
-        single_cut_layout.addWidget(self.cmb_cut_episode)
-        single_cut_layout.addWidget(self.txt_cut)
-        single_cut_layout.addWidget(self.btn_create_cut)
-        cut_layout.addLayout(single_cut_layout)
 
-        # 批量创建 Cut
-        batch_cut_layout = QHBoxLayout()
-        batch_cut_layout.addWidget(QLabel("批量:"))
+        single_layout.addWidget(self.cmb_cut_episode)
+        single_layout.addWidget(self.txt_cut)
+        single_layout.addWidget(self.btn_create_cut)
+        layout.addLayout(single_layout)
+
+        # 批量创建
+        batch_layout = QHBoxLayout()
+        batch_layout.addWidget(QLabel("批量:"))
+
         self.spin_cut_from = QSpinBox()
         self.spin_cut_from.setRange(1, 999)
         self.spin_cut_from.setValue(1)
-        batch_cut_layout.addWidget(self.spin_cut_from)
-        batch_cut_layout.addWidget(QLabel("到"))
+        batch_layout.addWidget(self.spin_cut_from)
+
+        batch_layout.addWidget(QLabel("到"))
         self.spin_cut_to = QSpinBox()
         self.spin_cut_to.setRange(1, 999)
         self.spin_cut_to.setValue(10)
-        batch_cut_layout.addWidget(self.spin_cut_to)
+        batch_layout.addWidget(self.spin_cut_to)
+
         self.btn_batch_cut = QPushButton("批量创建")
         self.btn_batch_cut.clicked.connect(self.batch_create_cuts)
-        batch_cut_layout.addWidget(self.btn_batch_cut)
-        cut_layout.addLayout(batch_cut_layout)
+        batch_layout.addWidget(self.btn_batch_cut)
 
-        # 兼用卡按钮
+        layout.addLayout(batch_layout)
+
+        # 兼用卡
         self.btn_create_reuse_cut = QPushButton("🔗 创建兼用卡")
         self.btn_create_reuse_cut.setToolTip("将多个Cut合并为兼用卡（共用素材）")
         self.btn_create_reuse_cut.clicked.connect(self.create_reuse_cut)
-        cut_layout.addWidget(self.btn_create_reuse_cut)
+        layout.addWidget(self.btn_create_reuse_cut)
 
-        return cut_group
+        return group
 
     def _create_import_group(self) -> QGroupBox:
         """创建素材导入组"""
-        import_group = QGroupBox("📥 素材导入")
-        import_layout = QVBoxLayout(import_group)
+        group = QGroupBox("📥 素材导入")
+        layout = QVBoxLayout(group)
 
-        # Episode 和 Cut 选择
+        # Episode和Cut选择
         target_layout = QHBoxLayout()
+        target_layout.addWidget(QLabel("Episode:"))
 
-        # Episode 选择（有 Episode 模式时显示）
         self.cmb_target_episode = QComboBox()
         self.cmb_target_episode.setPlaceholderText("选择 Episode")
-        self.cmb_target_episode.setCurrentIndex(-1)
         self.cmb_target_episode.currentTextChanged.connect(self._on_episode_changed)
-        self.lbl_target_episode = QLabel("Episode:")
-        target_layout.addWidget(self.lbl_target_episode)
         target_layout.addWidget(self.cmb_target_episode)
 
-        # Cut 选择
+        target_layout.addWidget(QLabel("Cut:"))
         self.cmb_target_cut = QComboBox()
         self.cmb_target_cut.setPlaceholderText("选择 Cut")
-        target_layout.addWidget(QLabel("Cut:"))
         target_layout.addWidget(self.cmb_target_cut)
 
-        import_layout.addLayout(target_layout)
+        layout.addLayout(target_layout)
 
         # 素材路径选择
-        import_layout.addLayout(self._create_material_browse_layout("BG", "bg"))
-        import_layout.addLayout(self._create_material_browse_layout("Cell", "cell"))
-        import_layout.addLayout(self._create_material_browse_layout("3DCG", "3dcg"))
-        import_layout.addLayout(self._create_material_browse_layout("TS", "timesheet"))
+        materials = [("BG", "bg"), ("Cell", "cell"), ("3DCG", "3dcg"), ("TS", "timesheet")]
+
+        for label, key in materials:
+            mat_layout = QHBoxLayout()
+            mat_layout.addWidget(QLabel(f"{label}:"))
+
+            txt_path = QLineEdit()
+            txt_path.setPlaceholderText(f"{label} 文件路径")
+            txt_path.setReadOnly(True)
+            self.material_paths[key] = txt_path
+            mat_layout.addWidget(txt_path)
+
+            btn_browse = QPushButton("浏览")
+            btn_browse.clicked.connect(partial(self.browse_material, key))
+            self.material_buttons[key] = btn_browse
+            mat_layout.addWidget(btn_browse)
+
+            layout.addLayout(mat_layout)
 
         # 导入操作按钮
-        import_action_layout = QHBoxLayout()
-        self.btn_import_single = QPushButton("导入选中")
-        self.btn_import_all = QPushButton("批量导入")
-        self.btn_copy_aep = QPushButton("复制 AEP 模板")
-        self.btn_batch_copy_aep = QPushButton("批量复制 AEP")
-        self.btn_batch_copy_aep.setToolTip("批量复制AEP模板到多个Cut并自动重命名")
+        action_layout = QHBoxLayout()
 
-        self.btn_import_single.clicked.connect(self.import_single)
-        self.btn_import_all.clicked.connect(self.import_all)
-        self.btn_copy_aep.clicked.connect(self.copy_aep_template)
-        self.btn_batch_copy_aep.clicked.connect(self.batch_copy_aep_template)
+        buttons = [
+            ("导入选中", self.import_single),
+            ("批量导入", self.import_all),
+            ("复制 AEP 模板", self.copy_aep_template),
+            ("批量复制 AEP", self.batch_copy_aep_template)
+        ]
 
-        import_action_layout.addWidget(self.btn_import_single)
-        import_action_layout.addWidget(self.btn_import_all)
-        import_action_layout.addWidget(self.btn_copy_aep)
-        import_action_layout.addWidget(self.btn_batch_copy_aep)
-        import_layout.addLayout(import_action_layout)
+        for text, handler in buttons:
+            btn = QPushButton(text)
+            btn.clicked.connect(handler)
+            action_layout.addWidget(btn)
 
-        return import_group
+        layout.addLayout(action_layout)
 
-    def _create_material_browse_layout(self, label_text: str, material_type: str) -> QHBoxLayout:
-        """创建素材浏览布局"""
-        layout = QHBoxLayout()
-
-        # 创建对应的文本框
-        txt_path = QLineEdit()
-        txt_path.setPlaceholderText(f"{label_text} 文件路径")
-        txt_path.setReadOnly(True)
-
-        # 保存到实例变量
-        setattr(self, f"txt_{material_type}_path", txt_path)
-
-        # 创建浏览按钮
-        btn_browse = QPushButton("浏览")
-        btn_browse.clicked.connect(lambda: self.browse_material(material_type))
-        setattr(self, f"btn_browse_{material_type}", btn_browse)
-
-        layout.addWidget(QLabel(f"{label_text}:"))
-        layout.addWidget(txt_path)
-        layout.addWidget(btn_browse)
-
-        return layout
-
-    def _create_tree_widget(self) -> QTreeWidget:
-        """创建目录树控件"""
-        tree = QTreeWidget()
-        tree.setHeaderLabel("项目结构")
-        tree.setAlternatingRowColors(True)
-        return tree
+        return group
 
     def _create_browser_tab(self) -> QWidget:
         """创建项目浏览Tab"""
-        browser = QWidget()
-        layout = QHBoxLayout(browser)
+        tab = QWidget()
+        layout = QHBoxLayout(tab)
 
-        # 主分割器
-        main_splitter = QSplitter(Qt.Horizontal)
+        splitter = QSplitter(Qt.Horizontal)
 
         # 左侧面板
         left_panel = self._create_browser_left_panel()
+        splitter.addWidget(left_panel)
 
         # 右侧面板
         right_panel = self._create_browser_right_panel()
+        splitter.addWidget(right_panel)
 
-        # 添加到主分割器
-        main_splitter.addWidget(left_panel)
-        main_splitter.addWidget(right_panel)
-        main_splitter.setStretchFactor(0, 1)
-        main_splitter.setStretchFactor(1, 3)
+        splitter.setStretchFactor(0, 1)
+        splitter.setStretchFactor(1, 3)
 
-        layout.addWidget(main_splitter)
+        layout.addWidget(splitter)
 
-        return browser
+        return tab
 
     def _create_browser_left_panel(self) -> QWidget:
         """创建浏览器左侧面板"""
-        left_panel = QWidget()
-        left_layout = QVBoxLayout(left_panel)
-        left_layout.setContentsMargins(0, 0, 0, 0)
+        panel = QWidget()
+        layout = QVBoxLayout(panel)
+        layout.setContentsMargins(0, 0, 0, 0)
 
-        # 项目统计组
+        # 项目统计
         stats_group = QGroupBox("📊 项目统计")
         stats_layout = QVBoxLayout(stats_group)
 
         self.txt_project_stats = QTextEdit()
         self.txt_project_stats.setReadOnly(True)
         self.txt_project_stats.setMaximumHeight(200)
-        self.txt_project_stats.setStyleSheet("""
-            QTextEdit {
-                background-color: #2A2A2A;
-                border: 1px solid #3C3C3C;
-                border-radius: 4px;
-                padding: 8px;
-                font-family: "MiSans", "微软雅黑", "Segoe UI", Arial;
-                font-size: 12px;
-            }
-        """)
         stats_layout.addWidget(self.txt_project_stats)
-        left_layout.addWidget(stats_group)
 
-        # Cut 树组
+        layout.addWidget(stats_group)
+
+        # Cut树
         tree_group = QGroupBox("📂 Cut")
-        tree_group.setToolTip("按 Ctrl+F 快速搜索Cut")
         tree_layout = QVBoxLayout(tree_group)
 
-        # Cut 搜索框
+        # 搜索框
         search_layout = QHBoxLayout()
+        search_layout.addWidget(QLabel("🔍"))
+
         self.txt_cut_search = SearchLineEdit()
         self.txt_cut_search.setPlaceholderText("搜索 Cut (支持数字快速定位)...")
         self.txt_cut_search.textChanged.connect(self._on_cut_search_changed)
         self.txt_cut_search.setClearButtonEnabled(True)
         self.txt_cut_search.returnPressed.connect(self._select_first_match)
-        self.txt_cut_search.setToolTip(
-            "输入Cut名称或数字进行搜索\n• 按回车选择第一个匹配项\n• 按Esc或点击清除按钮清空搜索\n• 快捷键: Ctrl+F\n• 兼用卡会标记为橙色")
-        self.btn_clear_search = QPushButton("清除")
-        self.btn_clear_search.clicked.connect(self._clear_cut_search)
-        self.btn_clear_search.setMaximumWidth(60)
-        search_layout.addWidget(QLabel("🔍"))
         search_layout.addWidget(self.txt_cut_search)
-        search_layout.addWidget(self.btn_clear_search)
+
         tree_layout.addLayout(search_layout)
 
         self.browser_tree = QTreeWidget()
@@ -2151,17 +1859,17 @@ class CXProjectManager(QMainWindow):
         self.browser_tree.setAlternatingRowColors(True)
         tree_layout.addWidget(self.browser_tree)
 
-        left_layout.addWidget(tree_group, 1)
+        layout.addWidget(tree_group, 1)
 
-        return left_panel
+        return panel
 
     def _create_browser_right_panel(self) -> QWidget:
         """创建浏览器右侧面板"""
-        right_panel = QWidget()
-        right_layout = QVBoxLayout(right_panel)
-        right_layout.setContentsMargins(0, 0, 0, 0)
+        panel = QWidget()
+        layout = QVBoxLayout(panel)
+        layout.setContentsMargins(0, 0, 0, 0)
 
-        # 文件浏览器组
+        # 文件浏览器
         files_group = QGroupBox("📁 文件浏览器")
         files_layout = QVBoxLayout(files_group)
 
@@ -2186,29 +1894,18 @@ class CXProjectManager(QMainWindow):
         self.file_tabs = QTabWidget()
         self.file_tabs.currentChanged.connect(self._on_file_tab_changed)
 
-        # 创建各种文件列表
-        self.vfx_list = self._create_file_list_widget()
-        self.cell_list = self._create_file_list_widget()
-        self.bg_list = self._create_file_list_widget()
-        self.render_list = self._create_file_list_widget()
-        self.cg_list = self._create_file_list_widget()
-
-        self.file_tabs.addTab(self.vfx_list, "VFX")
-        self.file_tabs.addTab(self.cell_list, "Cell")
-        self.file_tabs.addTab(self.bg_list, "BG")
-        self.file_tabs.addTab(self.render_list, "Render")
-        self.file_tabs.addTab(self.cg_list, "3DCG")
+        # 创建文件列表
+        tab_names = ["VFX", "Cell", "BG", "Render", "3DCG"]
+        for name in tab_names:
+            list_widget = DetailedFileListWidget()
+            list_widget.itemDoubleClicked.connect(self._on_file_item_double_clicked)
+            self.file_lists[name.lower()] = list_widget
+            self.file_tabs.addTab(list_widget, name)
 
         files_layout.addWidget(self.file_tabs)
-        right_layout.addWidget(files_group)
+        layout.addWidget(files_group)
 
-        return right_panel
-
-    def _create_file_list_widget(self) -> DetailedFileListWidget:
-        """创建文件列表控件"""
-        list_widget = DetailedFileListWidget()
-        list_widget.itemDoubleClicked.connect(self._on_file_item_double_clicked)
-        return list_widget
+        return panel
 
     def _setup_menubar(self):
         """设置菜单栏"""
@@ -2217,73 +1914,69 @@ class CXProjectManager(QMainWindow):
         # 文件菜单
         file_menu = menubar.addMenu("文件")
 
-        act_new = QAction("新建项目", self)
-        act_new.setShortcut("Ctrl+N")
-        act_new.triggered.connect(self.new_project)
-        file_menu.addAction(act_new)
+        actions = [
+            ("新建项目", "Ctrl+N", self.new_project),
+            ("打开项目", "Ctrl+O", self.open_project),
+            None,  # 分隔符
+            ("浏览所有项目...", None, self.browse_all_projects),
+            None,
+            ("设置默认路径...", None, self.set_default_path),
+            None,
+            ("退出", "Ctrl+Q", self.close)
+        ]
 
-        act_open = QAction("打开项目", self)
-        act_open.setShortcut("Ctrl+O")
-        act_open.triggered.connect(self.open_project)
-        file_menu.addAction(act_open)
+        # 添加基本操作
+        for i, action_data in enumerate(actions):
+            if action_data is None:
+                file_menu.addSeparator()
+            else:
+                action = QAction(action_data[0], self)
+                if action_data[1]:
+                    action.setShortcut(action_data[1])
+                action.triggered.connect(action_data[2])
+                file_menu.addAction(action)
 
-        file_menu.addSeparator()
-
-        # 最近项目子菜单
-        self.recent_menu = file_menu.addMenu("最近项目")
-        self._update_recent_menu()
-
-        file_menu.addSeparator()
-
-        act_settings = QAction("设置默认路径...", self)
-        act_settings.triggered.connect(self.set_default_path)
-        file_menu.addAction(act_settings)
-
-        file_menu.addSeparator()
-
-        act_exit = QAction("退出", self)
-        act_exit.setShortcut("Ctrl+Q")
-        act_exit.triggered.connect(self.close)
-        file_menu.addAction(act_exit)
+                # 在"浏览所有项目"后插入最近项目菜单
+                if i == 3:  # 在"浏览所有项目"之后
+                    self.recent_menu = QMenu("最近项目", self)
+                    file_menu.insertMenu(action, self.recent_menu)
+                    self._update_recent_menu()
 
         # 工具菜单
         tools_menu = menubar.addMenu("工具")
 
-        act_refresh = QAction("刷新目录树", self)
-        act_refresh.setShortcut("F5")
-        act_refresh.triggered.connect(self._refresh_tree)
-        tools_menu.addAction(act_refresh)
+        tool_actions = [
+            ("刷新目录树", "F5", self._refresh_tree),
+            ("搜索Cut", "Ctrl+F", self._focus_cut_search),
+            None,
+            ("批量复制AEP模板...", None, self.batch_copy_aep_template),
+            ("创建兼用卡...", None, self.create_reuse_cut),
+            None,
+            ("在文件管理器中打开", None, self.open_in_explorer)
+        ]
 
-        act_search_cut = QAction("搜索Cut", self)
-        act_search_cut.setShortcut("Ctrl+F")
-        act_search_cut.triggered.connect(self._focus_cut_search)
-        tools_menu.addAction(act_search_cut)
-
-        tools_menu.addSeparator()
-
-        act_batch_aep = QAction("批量复制AEP模板...", self)
-        act_batch_aep.triggered.connect(self.batch_copy_aep_template)
-        tools_menu.addAction(act_batch_aep)
-
-        act_reuse_cut = QAction("创建兼用卡...", self)
-        act_reuse_cut.triggered.connect(self.create_reuse_cut)
-        tools_menu.addAction(act_reuse_cut)
-
-        tools_menu.addSeparator()
-
-        act_open_folder = QAction("在文件管理器中打开", self)
-        act_open_folder.triggered.connect(self.open_in_explorer)
-        tools_menu.addAction(act_open_folder)
+        for action_data in tool_actions:
+            if action_data is None:
+                tools_menu.addSeparator()
+            else:
+                action = QAction(action_data[0], self)
+                if action_data[1]:
+                    action.setShortcut(action_data[1])
+                action.triggered.connect(action_data[2])
+                tools_menu.addAction(action)
 
         # 帮助菜单
         help_menu = menubar.addMenu("帮助")
-        act_help = QAction("使用说明", self)
-        act_help.triggered.connect(self.show_help)
-        help_menu.addAction(act_help)
 
-        act_about = QAction("关于", self)
-        act_about.triggered.connect(self.show_about)
-        help_menu.addAction(act_about)
+        help_actions = [
+            ("使用说明", self.show_help),
+            ("关于", self.show_about)
+        ]
+
+        for text, handler in help_actions:
+            action = QAction(text, self)
+            action.triggered.connect(handler)
+            help_menu.addAction(action)
 
     def _setup_statusbar(self):
         """设置状态栏"""
@@ -2294,8 +1987,6 @@ class CXProjectManager(QMainWindow):
     def _set_initial_state(self):
         """设置初始状态"""
         self._enable_controls(False)
-
-        # 确保项目名称输入框始终启用
         self.txt_project_name.setEnabled(True)
         self.btn_new_project.setEnabled(True)
         self.btn_open_project.setEnabled(True)
@@ -2304,22 +1995,19 @@ class CXProjectManager(QMainWindow):
 
     def new_project(self):
         """新建项目"""
-        # 获取项目名称
         project_name = self.txt_project_name.text().strip()
         if not project_name:
             QMessageBox.warning(self, "错误", "请输入项目名称")
             self.txt_project_name.setFocus()
             return
 
-        # 检查是否有默认路径
+        # 检查默认路径
         default_path = self.app_settings.value("default_project_path", "")
 
         if default_path and Path(default_path).exists():
             base_folder = Path(default_path)
         else:
-            base_folder = QFileDialog.getExistingDirectory(
-                self, "选择项目创建位置", ""
-            )
+            base_folder = QFileDialog.getExistingDirectory(self, "选择项目创建位置", "")
             if not base_folder:
                 return
             base_folder = Path(base_folder)
@@ -2341,26 +2029,32 @@ class CXProjectManager(QMainWindow):
             self.project_base = self.project_manager.project_base
             self.project_config = self.project_manager.project_config
 
-            # 更新UI
+            # 注册项目
+            self.project_registry.register_project(self.project_config, self.project_base)
+
+            # 更新注册表，确保即使默认路径改变也能保留项目信息
+            if hasattr(self, 'project_registry'):
+                episodes = self.project_config.get("episodes", {})
+                self.project_config["episode_count"] = len(episodes)
+                self.project_config["episode_list"] = sorted(episodes.keys())
+
             self.project_changed.emit()
             self._add_to_recent(str(self.project_base))
-
-            # 清空项目名输入框
             self.txt_project_name.clear()
 
-            QMessageBox.information(
-                self, "成功", f"项目 '{project_name}' 创建成功！"
-            )
+            QMessageBox.information(self, "成功", f"项目 '{project_name}' 创建成功！")
 
     def open_project(self):
         """打开已有项目"""
-        folder = QFileDialog.getExistingDirectory(
-            self, "选择项目文件夹", ""
-        )
-        if not folder:
-            return
+        folder = QFileDialog.getExistingDirectory(self, "选择项目文件夹", "")
+        if folder:
+            self._load_project(folder)
 
-        self._load_project(folder)
+    def browse_all_projects(self):
+        """浏览所有项目"""
+        dialog = ProjectBrowserDialog(self.project_registry, self)
+        dialog.project_selected.connect(self._load_project)
+        dialog.exec_()
 
     def _load_project(self, folder: str):
         """加载项目"""
@@ -2369,12 +2063,16 @@ class CXProjectManager(QMainWindow):
         if self.project_manager.load_project(project_path):
             self.project_base = self.project_manager.project_base
             self.project_config = self.project_manager.project_config
+
+            # 更新访问时间
+            project_name = self.project_config.get("project_name")
+            if project_name:
+                self.project_registry.update_access_time(project_name)
+
             self.project_changed.emit()
             self._add_to_recent(str(project_path))
         else:
-            QMessageBox.warning(
-                self, "错误", "所选文件夹不是有效的项目（缺少 project_config.json）"
-            )
+            QMessageBox.warning(self, "错误", "所选文件夹不是有效的项目（缺少 project_config.json）")
 
     # ========================== Episode 和 Cut 管理 ========================== #
 
@@ -2384,11 +2082,9 @@ class CXProjectManager(QMainWindow):
             QMessageBox.warning(self, "错误", "请先打开或创建项目")
             return
 
-        # 获取Episode类型和标识
         ep_type = self.cmb_episode_type.currentText().strip().lower()
         ep_identifier = self.txt_episode.text().strip()
 
-        # 检查单集模式下的限制
         if self.chk_no_episode.isChecked() and ep_type == "ep":
             QMessageBox.information(
                 self, "提示",
@@ -2397,24 +2093,16 @@ class CXProjectManager(QMainWindow):
             )
             return
 
-        # 创建Episode
         success, result = self.project_manager.create_episode(ep_type, ep_identifier)
 
         if success:
-            # 刷新UI
-            self._refresh_tree()
-            self._update_import_combos()
-            self._update_cut_episode_combo()
-            self._update_project_stats()
-            self._update_browser_tree()
-
+            self._refresh_all_views()
             self.statusbar.showMessage(f"已创建 Episode: {result}", 3000)
         else:
             QMessageBox.warning(self, "错误", result)
 
     def batch_create_episodes(self):
-        """批量创建Episode（仅支持ep类型）"""
-        # 确保是ep类型
+        """批量创建Episode"""
         if self.cmb_episode_type.currentText().lower() != "ep":
             QMessageBox.warning(self, "错误", "批量创建仅支持 'ep' 类型")
             return
@@ -2427,30 +2115,13 @@ class CXProjectManager(QMainWindow):
             return
 
         created_count = 0
-        skipped_count = 0
-
-        # 临时保存当前类型
-        original_type = self.cmb_episode_type.currentText()
-        self.cmb_episode_type.setCurrentText("ep")
-
         for i in range(start, end + 1):
-            success, result = self.project_manager.create_episode("ep", str(i))
+            success, _ = self.project_manager.create_episode("ep", str(i))
             if success:
                 created_count += 1
-            else:
-                skipped_count += 1
 
-        # 恢复原始类型
-        self.cmb_episode_type.setCurrentText(original_type)
-
-        # 显示结果
-        message = f"成功创建 {created_count} 个 Episode"
-        if skipped_count > 0:
-            message += f"，跳过 {skipped_count} 个已存在的 Episode"
-
-        if created_count > 0 or skipped_count > 0:
-            QMessageBox.information(self, "完成", message)
-            # 批量创建后刷新
+        if created_count > 0:
+            QMessageBox.information(self, "完成", f"成功创建 {created_count} 个 Episode")
             self._refresh_all_views()
 
     def create_cut(self, show_error=True):
@@ -2465,23 +2136,18 @@ class CXProjectManager(QMainWindow):
         # 获取Episode ID
         episode_id = None
         if self.chk_no_episode.isChecked():
-            # 单集模式下，如果有选择Episode（特殊类型），则使用
             ep_text = self.cmb_cut_episode.currentText().strip()
             if ep_text and ep_text in self.project_config.get("episodes", {}):
                 episode_id = ep_text
         else:
-            # 标准模式下必须选择Episode
             episode_id = self.cmb_cut_episode.currentText().strip()
 
-        # 创建Cut
         success, result = self.project_manager.create_cut(cut_num, episode_id)
 
         if success:
-            if show_error:  # 单个创建时刷新
+            if show_error:
                 self._refresh_all_views()
-                self.statusbar.showMessage(
-                    f"已创建 Cut: {result} (含 06_render 输出目录)", 3000
-                )
+                self.statusbar.showMessage(f"已创建 Cut: {result} (含 06_render 输出目录)", 3000)
         else:
             if show_error:
                 QMessageBox.warning(self, "错误", result)
@@ -2495,39 +2161,25 @@ class CXProjectManager(QMainWindow):
             QMessageBox.warning(self, "错误", "起始编号不能大于结束编号")
             return
 
-        # 获取Episode ID
         episode_id = None
         if self.chk_no_episode.isChecked():
-            # 单集模式下，检查是否选择了特殊Episode
             ep_text = self.cmb_cut_episode.currentText().strip()
             if ep_text and ep_text in self.project_config.get("episodes", {}):
                 episode_id = ep_text
         else:
-            # 标准模式下必须选择Episode
             episode_id = self.cmb_cut_episode.currentText().strip()
             if not episode_id:
                 QMessageBox.warning(self, "错误", "批量创建需要先选择 Episode")
                 return
 
-        # 批量创建
         created_count = 0
-        skipped_count = 0
-
         for i in range(start, end + 1):
-            self.txt_cut.setText(str(i))
             success, _ = self.project_manager.create_cut(str(i), episode_id)
             if success:
                 created_count += 1
-            else:
-                skipped_count += 1
 
-        # 显示结果
-        message = f"成功创建 {created_count} 个 Cut"
-        if skipped_count > 0:
-            message += f"，跳过 {skipped_count} 个已存在的 Cut"
-
-        if created_count > 0 or skipped_count > 0:
-            QMessageBox.information(self, "完成", message)
+        if created_count > 0:
+            QMessageBox.information(self, "完成", f"成功创建 {created_count} 个 Cut")
             self._refresh_all_views()
 
     def create_reuse_cut(self):
@@ -2536,14 +2188,11 @@ class CXProjectManager(QMainWindow):
             QMessageBox.warning(self, "错误", "请先打开或创建项目")
             return
 
-        # 获取当前Episode（如果有）
+        # 获取Episode ID
         episode_id = None
-
         if not self.chk_no_episode.isChecked():
-            # 标准模式，获取当前选择的Episode
             episode_id = self.cmb_cut_episode.currentText().strip()
             if not episode_id:
-                # 如果没有选择Episode，让用户选择
                 episodes = list(self.project_config.get("episodes", {}).keys())
                 if not episodes:
                     QMessageBox.warning(self, "错误", "请先创建Episode")
@@ -2557,19 +2206,14 @@ class CXProjectManager(QMainWindow):
                 if not ok:
                     return
         else:
-            # 单集模式，检查是否选择了特殊Episode
             selected_ep = self.cmb_cut_episode.currentText().strip()
-            # 只有当选择了有效的Episode时才使用它
             if selected_ep and selected_ep in self.project_config.get("episodes", {}):
                 episode_id = selected_ep
-            # 否则episode_id保持为None，为根目录的Cut创建兼用卡
 
-        # 显示兼用卡创建对话框
+        # 显示对话框
         dialog = ReuseCutDialog(self.project_config, episode_id, self)
         if dialog.exec() == QDialog.Accepted:
             cuts = dialog.get_cuts()
-
-            # 创建兼用卡
             success, message = self.project_manager.create_reuse_cut(cuts, episode_id)
 
             if success:
@@ -2584,14 +2228,12 @@ class CXProjectManager(QMainWindow):
     def browse_material(self, material_type: str):
         """浏览选择素材"""
         if material_type in ["cell", "3dcg"]:
-            # 选择文件夹
             path = QFileDialog.getExistingDirectory(
                 self, f"选择 {material_type.upper()} 文件夹", ""
             )
             if path:
-                getattr(self, f"txt_{material_type}_path").setText(path)
+                self.material_paths[material_type].setText(path)
         else:
-            # 选择文件
             file_filter = {
                 "bg": "图像文件 (*.psd *.png *.jpg *.jpeg *.tga *.tiff *.bmp *.exr *.dpx)",
                 "timesheet": "CSV 文件 (*.csv)",
@@ -2601,7 +2243,7 @@ class CXProjectManager(QMainWindow):
                 self, f"选择 {material_type.upper()} 文件", "", file_filter
             )
             if file_path:
-                getattr(self, f"txt_{material_type}_path").setText(file_path)
+                self.material_paths[material_type].setText(file_path)
 
     def import_single(self):
         """导入单个选中的素材"""
@@ -2611,9 +2253,7 @@ class CXProjectManager(QMainWindow):
 
         # 获取目标
         if self.project_config.get("no_episode", False):
-            # 单集模式
             if self.cmb_target_episode.currentText():
-                # 选择了特殊Episode
                 target_ep = self.cmb_target_episode.currentText()
                 target_cut = self.cmb_target_cut.currentText()
                 if not target_cut:
@@ -2621,14 +2261,12 @@ class CXProjectManager(QMainWindow):
                     return
                 target = f"{target_ep}|{target_cut}"
             else:
-                # 直接选择Cut
                 target_cut = self.cmb_target_cut.currentText()
                 if not target_cut:
                     QMessageBox.warning(self, "错误", "请选择目标 Cut")
                     return
                 target = target_cut
         else:
-            # 标准模式
             target_ep = self.cmb_target_episode.currentText()
             target_cut = self.cmb_target_cut.currentText()
             if not target_ep or not target_cut:
@@ -2638,11 +2276,9 @@ class CXProjectManager(QMainWindow):
 
         # 收集要导入的素材
         imports = []
-        material_types = ["bg", "cell", "3dcg", "timesheet"]
-        for mt in material_types:
-            path_widget = getattr(self, f"txt_{mt}_path")
-            if path_widget.text():
-                imports.append((mt, path_widget.text()))
+        for mt in ["bg", "cell", "3dcg", "timesheet"]:
+            if self.material_paths[mt].text():
+                imports.append((mt, self.material_paths[mt].text()))
 
         if not imports:
             QMessageBox.warning(self, "错误", "请先选择要导入的素材")
@@ -2663,22 +2299,18 @@ class CXProjectManager(QMainWindow):
             self._refresh_tree()
 
             # 清空已导入的路径
-            for mt, path in imports:
-                getattr(self, f"txt_{mt}_path").clear()
+            for mt, _ in imports:
+                self.material_paths[mt].clear()
 
-            # 重置版本确认跳过设置（为下次导入准备）
-            self.skip_version_confirmation = {
-                "bg": False,
-                "cell": False,
-                "3dcg": False
-            }
+            # 重置版本确认跳过设置
+            self.skip_version_confirmation = {"bg": False, "cell": False, "3dcg": False}
 
     def import_all(self):
         """批量导入所有已选择的素材"""
         self.import_single()
 
     def _import_material(self, material_type: str, source_path: str, target: str) -> bool:
-        """执行素材导入（带版本管理）"""
+        """执行素材导入"""
         try:
             src = Path(source_path)
             if not src.exists():
@@ -2701,12 +2333,9 @@ class CXProjectManager(QMainWindow):
             # 检查是否是兼用卡
             reuse_cut = self.project_manager.get_reuse_cut_for_cut(cut_id)
             if reuse_cut:
-                # 使用兼用卡的主Cut
                 cut_id = reuse_cut.main_cut
-                # 使用兼用卡的命名
                 base_name = f"{proj_name}_{ep_part}{reuse_cut.get_display_name()}"
             else:
-                # 构建基础文件名（不含版本号）
                 base_name = f"{proj_name}_{ep_part}{cut_id}"
 
             # 根据类型处理
@@ -2714,10 +2343,8 @@ class CXProjectManager(QMainWindow):
                 bg_dir = vfx_base / cut_id / "bg"
                 ensure_dir(bg_dir)
 
-                # 获取版本号
                 version = self.project_manager.get_next_version(bg_dir, base_name)
 
-                # 确认版本号
                 if not self.skip_version_confirmation["bg"] and bg_dir.exists() and any(bg_dir.iterdir()):
                     dialog = VersionConfirmDialog("BG", version, self)
                     if dialog.exec() == QDialog.Accepted:
@@ -2727,7 +2354,6 @@ class CXProjectManager(QMainWindow):
                     else:
                         return False
 
-                # 复制文件
                 file_name = f"{base_name}_T{version}{src.suffix.lower()}"
                 dst = bg_dir / file_name
                 copy_file_safe(src, dst)
@@ -2736,10 +2362,8 @@ class CXProjectManager(QMainWindow):
                 cell_dir = vfx_base / cut_id / "cell"
                 ensure_dir(cell_dir)
 
-                # 获取版本号
                 version = self.project_manager.get_next_version(cell_dir, base_name)
 
-                # 确认版本号
                 if not self.skip_version_confirmation["cell"] and cell_dir.exists() and any(cell_dir.iterdir()):
                     dialog = VersionConfirmDialog("Cell", version, self)
                     if dialog.exec() == QDialog.Accepted:
@@ -2749,7 +2373,6 @@ class CXProjectManager(QMainWindow):
                     else:
                         return False
 
-                # 复制文件夹
                 folder_name = f"{base_name}_T{version}"
                 dst_folder = cell_dir / folder_name
                 if dst_folder.exists():
@@ -2761,7 +2384,6 @@ class CXProjectManager(QMainWindow):
                 cg_cut_dir = cg_base / cut_id
                 ensure_dir(cg_cut_dir)
 
-                # 3DCG直接复制，不需要版本管理
                 for item in src.iterdir():
                     if item.is_file():
                         copy_file_safe(item, cg_cut_dir / item.name)
@@ -2772,9 +2394,7 @@ class CXProjectManager(QMainWindow):
                         shutil.copytree(item, target_dir)
 
             else:  # timesheet
-                # Timesheet直接覆盖，不需要版本管理
                 if reuse_cut:
-                    # 兼用卡使用特殊命名
                     dst = vfx_base / "timesheets" / f"{reuse_cut.get_display_name()}.csv"
                 else:
                     dst = vfx_base / "timesheets" / f"{cut_id}.csv"
@@ -2788,16 +2408,14 @@ class CXProjectManager(QMainWindow):
             return False
 
     def copy_aep_template(self):
-        """复制AEP模板（带版本管理）"""
+        """复制AEP模板"""
         if not self.project_base:
             QMessageBox.warning(self, "错误", "请先打开或创建项目")
             return
 
         # 获取目标
         if self.project_config.get("no_episode", False):
-            # 单集模式
             if self.cmb_target_episode.currentText():
-                # 选择了特殊Episode
                 ep_id = self.cmb_target_episode.currentText()
                 cut_id = self.cmb_target_cut.currentText()
                 if not cut_id:
@@ -2805,7 +2423,6 @@ class CXProjectManager(QMainWindow):
                     return
                 cut_path = self.project_base / ep_id / "01_vfx" / cut_id
             else:
-                # 直接选择Cut
                 cut_id = self.cmb_target_cut.currentText()
                 if not cut_id:
                     QMessageBox.warning(self, "错误", "请选择目标 Cut")
@@ -2813,7 +2430,6 @@ class CXProjectManager(QMainWindow):
                 cut_path = self.project_base / "01_vfx" / cut_id
                 ep_id = None
         else:
-            # 标准模式
             ep_id = self.cmb_target_episode.currentText()
             cut_id = self.cmb_target_cut.currentText()
             if not ep_id or not cut_id:
@@ -2824,7 +2440,6 @@ class CXProjectManager(QMainWindow):
         # 检查是否是兼用卡
         reuse_cut = self.project_manager.get_reuse_cut_for_cut(cut_id)
         if reuse_cut:
-            # 使用兼用卡的主Cut路径
             if ep_id:
                 cut_path = self.project_base / ep_id / "01_vfx" / reuse_cut.main_cut
             else:
@@ -2838,59 +2453,29 @@ class CXProjectManager(QMainWindow):
             )
             return
 
+        # 复制模板
         proj_name = self.project_base.name
-
-        # 复制所有模板
         copied = 0
+
         for template in template_dir.glob("*.aep"):
-            # 保留模板的原始文件名中的版本号或其他信息
             template_stem = template.stem
 
-            # 构建新文件名
             if reuse_cut:
-                # 兼用卡使用特殊命名
                 cuts_str = reuse_cut.get_display_name()
-                if ep_id:
-                    ep_part = ep_id.upper()
-                    if '_v' in template_stem:
-                        version_part = template_stem[template_stem.rfind('_v'):]
-                        aep_name = f"{proj_name}_{ep_part}_{cuts_str}{version_part}{template.suffix}"
-                    else:
-                        aep_name = f"{proj_name}_{ep_part}_{cuts_str}_v0{template.suffix}"
-                else:
-                    if '_v' in template_stem:
-                        version_part = template_stem[template_stem.rfind('_v'):]
-                        aep_name = f"{proj_name}_{cuts_str}{version_part}{template.suffix}"
-                    else:
-                        aep_name = f"{proj_name}_{cuts_str}_v0{template.suffix}"
+                base_name = f"{proj_name}_{ep_id.upper() + '_' if ep_id else ''}{cuts_str}"
             else:
-                # 普通Cut
-                if ep_id:
-                    ep_part = ep_id.upper()
-                    if '_v' in template_stem:
-                        version_part = template_stem[template_stem.rfind('_v'):]
-                        aep_name = f"{proj_name}_{ep_part}_{cut_id}{version_part}{template.suffix}"
-                    else:
-                        aep_name = f"{proj_name}_{ep_part}_{cut_id}_v0{template.suffix}"
-                else:
-                    if '_v' in template_stem:
-                        version_part = template_stem[template_stem.rfind('_v'):]
-                        aep_name = f"{proj_name}_{cut_id}{version_part}{template.suffix}"
-                    else:
-                        aep_name = f"{proj_name}_{cut_id}_v0{template.suffix}"
+                base_name = f"{proj_name}_{ep_id.upper() + '_' if ep_id else ''}{cut_id}"
 
-            dst = cut_path / aep_name
-            if copy_file_safe(template, dst):
+            version_part = template_stem[template_stem.rfind('_v'):] if '_v' in template_stem else "_v0"
+            aep_name = f"{base_name}{version_part}{template.suffix}"
+
+            if copy_file_safe(template, cut_path / aep_name):
                 copied += 1
 
-        message = f"已复制 {copied} 个 AEP 模板到 Cut {cut_id}"
-        if reuse_cut:
-            message = f"已复制 {copied} 个 AEP 模板到兼用卡 {reuse_cut.get_display_name()}"
-
+        message = f"已复制 {copied} 个 AEP 模板到 {'兼用卡 ' + reuse_cut.get_display_name() if reuse_cut else 'Cut ' + cut_id}"
         QMessageBox.information(self, "成功", message)
         self._refresh_tree()
 
-        # 如果在浏览器Tab，刷新文件列表
         if self.tabs.currentIndex() == 1 and self.current_cut_id == cut_id:
             self._load_cut_files(cut_id, ep_id)
 
@@ -2900,7 +2485,6 @@ class CXProjectManager(QMainWindow):
             QMessageBox.warning(self, "错误", "请先打开或创建项目")
             return
 
-        # 检查模板目录
         template_dir = self.project_base / "07_master_assets" / "aep_templates"
         if not template_dir.exists() or not list(template_dir.glob("*.aep")):
             QMessageBox.warning(
@@ -2908,7 +2492,6 @@ class CXProjectManager(QMainWindow):
             )
             return
 
-        # 显示批量复制对话框
         dialog = BatchAepDialog(self.project_config, self)
         if dialog.exec() == QDialog.Accepted:
             settings = dialog.get_settings()
@@ -2920,10 +2503,10 @@ class CXProjectManager(QMainWindow):
         templates = list(template_dir.glob("*.aep"))
         proj_name = self.project_base.name
 
-        # 收集要处理的Episode和Cut
+        # 收集目标
         targets = []
 
-        # 获取所有兼用卡信息
+        # 获取兼用卡信息
         reuse_cuts_map = {}
         for cut_data in self.project_config.get("reuse_cuts", []):
             cut = ReuseCut.from_dict(cut_data)
@@ -2931,18 +2514,14 @@ class CXProjectManager(QMainWindow):
                 reuse_cuts_map[cut_id] = cut
 
         if settings["scope"] == 0:  # 所有
-            # 处理无Episode模式的Cuts
             if self.project_config.get("no_episode", False):
                 for cut_id in self.project_config.get("cuts", []):
-                    # 如果是兼用卡成员但不是主Cut，跳过
                     if cut_id in reuse_cuts_map and reuse_cuts_map[cut_id].main_cut != cut_id:
                         continue
                     targets.append((None, cut_id))
 
-            # 处理所有Episodes
             for ep_id, cuts in self.project_config.get("episodes", {}).items():
                 for cut_id in cuts:
-                    # 如果是兼用卡成员但不是主Cut，跳过
                     if cut_id in reuse_cuts_map and reuse_cuts_map[cut_id].main_cut != cut_id:
                         continue
                     targets.append((ep_id, cut_id))
@@ -2951,163 +2530,100 @@ class CXProjectManager(QMainWindow):
             ep_id = settings["episode"]
             cuts = self.project_config["episodes"][ep_id]
 
-            # 如果指定了Cut范围
             if settings["scope"] == 2:
                 cut_from = settings["cut_from"]
                 cut_to = settings["cut_to"]
-                # 筛选在范围内的Cut
-                filtered_cuts = []
-                for cut in cuts:
-                    try:
-                        cut_num = int(cut)
-                        if cut_from <= cut_num <= cut_to:
-                            filtered_cuts.append(cut)
-                    except:
-                        continue
-                cuts = filtered_cuts
+                cuts = [cut for cut in cuts if cut.isdigit() and cut_from <= int(cut) <= cut_to]
 
             for cut_id in cuts:
-                # 如果是兼用卡成员但不是主Cut，跳过
                 if cut_id in reuse_cuts_map and reuse_cuts_map[cut_id].main_cut != cut_id:
                     continue
                 targets.append((ep_id, cut_id))
 
         # 执行复制
-        success_count = 0
-        skip_count = 0
-        overwrite_count = 0
-        reuse_skip_count = 0
+        counts = {"success": 0, "skip": 0, "overwrite": 0, "reuse_skip": 0}
 
         for ep_id, cut_id in targets:
-            # 检查是否是兼用卡
             is_reuse = cut_id in reuse_cuts_map
             reuse_cut = reuse_cuts_map.get(cut_id)
 
-            # 如果设置了跳过兼用卡
             if settings["skip_reuse"] and is_reuse:
-                reuse_skip_count += 1
+                counts["reuse_skip"] += 1
                 continue
 
-            # 确定Cut路径
-            if is_reuse:
-                actual_cut_id = reuse_cut.main_cut
-            else:
-                actual_cut_id = cut_id
-
-            if ep_id:
-                cut_path = self.project_base / ep_id / "01_vfx" / actual_cut_id
-            else:
-                cut_path = self.project_base / "01_vfx" / actual_cut_id
+            actual_cut_id = reuse_cut.main_cut if is_reuse else cut_id
+            cut_path = (self.project_base / ep_id / "01_vfx" / actual_cut_id if ep_id
+                        else self.project_base / "01_vfx" / actual_cut_id)
 
             if not cut_path.exists():
                 continue
 
-            # 检查是否要跳过已有AEP的Cut
-            if settings["skip_existing"]:
-                existing_aeps = list(cut_path.glob("*.aep"))
-                if existing_aeps:
-                    skip_count += len(existing_aeps)
-                    continue
+            if settings["skip_existing"] and list(cut_path.glob("*.aep")):
+                counts["skip"] += len(list(cut_path.glob("*.aep")))
+                continue
 
             cut_copied = 0
             for template in templates:
-                # 保留模板的原始文件名中的版本号或其他信息
                 template_stem = template.stem
 
-                # 构建新文件名
                 if is_reuse:
-                    # 兼用卡使用特殊命名
                     cuts_str = reuse_cut.get_display_name()
-                    if ep_id:
-                        ep_part = ep_id.upper()
-                        if '_v' in template_stem:
-                            version_part = template_stem[template_stem.rfind('_v'):]
-                            aep_name = f"{proj_name}_{ep_part}_{cuts_str}{version_part}{template.suffix}"
-                        else:
-                            aep_name = f"{proj_name}_{ep_part}_{cuts_str}_v0{template.suffix}"
-                    else:
-                        if '_v' in template_stem:
-                            version_part = template_stem[template_stem.rfind('_v'):]
-                            aep_name = f"{proj_name}_{cuts_str}{version_part}{template.suffix}"
-                        else:
-                            aep_name = f"{proj_name}_{cuts_str}_v0{template.suffix}"
+                    base_name = f"{proj_name}_{ep_id.upper() + '_' if ep_id else ''}{cuts_str}"
                 else:
-                    # 普通Cut
-                    if ep_id:
-                        ep_part = ep_id.upper()
-                        if '_v' in template_stem:
-                            version_part = template_stem[template_stem.rfind('_v'):]
-                            aep_name = f"{proj_name}_{ep_part}_{cut_id}{version_part}{template.suffix}"
-                        else:
-                            aep_name = f"{proj_name}_{ep_part}_{cut_id}_v0{template.suffix}"
-                    else:
-                        if '_v' in template_stem:
-                            version_part = template_stem[template_stem.rfind('_v'):]
-                            aep_name = f"{proj_name}_{cut_id}{version_part}{template.suffix}"
-                        else:
-                            aep_name = f"{proj_name}_{cut_id}_v0{template.suffix}"
+                    base_name = f"{proj_name}_{ep_id.upper() + '_' if ep_id else ''}{cut_id}"
 
+                version_part = template_stem[template_stem.rfind('_v'):] if '_v' in template_stem else "_v0"
+                aep_name = f"{base_name}{version_part}{template.suffix}"
                 dst = cut_path / aep_name
 
                 if dst.exists():
                     if settings["overwrite"]:
-                        overwrite_count += 1
+                        counts["overwrite"] += 1
                     else:
-                        skip_count += 1
+                        counts["skip"] += 1
                         continue
 
                 if copy_file_safe(template, dst):
                     cut_copied += 1
 
             if cut_copied > 0:
-                success_count += 1
+                counts["success"] += 1
 
         # 显示结果
-        message_lines = [f"✅ 成功为 {success_count} 个 Cut 复制了模板"]
-        if overwrite_count > 0:
-            message_lines.append(f"🔄 覆盖了 {overwrite_count} 个文件")
-        if skip_count > 0:
-            message_lines.append(f"⏭️ 跳过了 {skip_count} 个文件")
-        if reuse_skip_count > 0:
-            message_lines.append(f"🔗 跳过了 {reuse_skip_count} 个兼用卡")
+        message_lines = [f"✅ 成功为 {counts['success']} 个 Cut 复制了模板"]
+        if counts["overwrite"] > 0:
+            message_lines.append(f"🔄 覆盖了 {counts['overwrite']} 个文件")
+        if counts["skip"] > 0:
+            message_lines.append(f"⏭️ 跳过了 {counts['skip']} 个文件")
+        if counts["reuse_skip"] > 0:
+            message_lines.append(f"🔗 跳过了 {counts['reuse_skip']} 个兼用卡")
 
-        message = "\n".join(message_lines)
-
-        QMessageBox.information(self, "批量复制完成", message)
+        QMessageBox.information(self, "批量复制完成", "\n".join(message_lines))
         self._refresh_tree()
 
-    # ========================== UI 更新 ========================== #
+    # ========================== UI 更新方法 ========================== #
 
     def _on_project_changed(self):
         """项目变更时的处理"""
         if self.project_base and self.project_config:
-            # 更新项目路径显示
             self.lbl_project_path.setText(str(self.project_base))
             self.lbl_project_path.setStyleSheet("color: #0D7ACC;")
 
-            # 更新Episode模式
             no_episode = self.project_config.get("no_episode", False)
             self.chk_no_episode.setChecked(no_episode)
 
-            # 刷新界面
             self._refresh_all_views()
 
-            # 重置当前选择
             self.current_cut_id = None
             self.current_episode_id = None
             self.current_path = None
 
-            # 清除搜索
             if self.txt_cut_search:
                 self.txt_cut_search.clear()
 
-            # 启用控件
             self._enable_controls(True)
-
-            # 更新状态栏
             self.statusbar.showMessage(f"当前项目: {self.project_base.name}")
         else:
-            # 清空项目状态
             self.lbl_project_path.setText("未打开项目")
             self.lbl_project_path.setStyleSheet("color: #999; font-style: italic;")
             self._clear_all_views()
@@ -3140,11 +2656,9 @@ class CXProjectManager(QMainWindow):
 
     def _on_episode_type_changed(self, episode_type: str):
         """Episode类型变化时的处理"""
-        # 检查单集模式下的限制
         if self.chk_no_episode.isChecked() and episode_type.lower() == "ep":
             self.btn_create_episode.setEnabled(False)
             self.btn_batch_episode.setEnabled(False)
-            self.lbl_batch_ep.setEnabled(False)
             self.spin_ep_from.setEnabled(False)
             self.spin_ep_to.setEnabled(False)
             self.btn_create_episode.setToolTip("单集模式下不能创建标准集数(ep)")
@@ -3152,18 +2666,14 @@ class CXProjectManager(QMainWindow):
             self.btn_create_episode.setEnabled(True)
             self.btn_create_episode.setToolTip("")
 
-        # 根据类型调整输入提示和批量创建的可用性
         if episode_type.lower() == "ep" and not self.chk_no_episode.isChecked():
             self.txt_episode.setPlaceholderText("编号 (如: 01, 02) - 可留空")
             self.btn_batch_episode.setEnabled(True)
-            self.lbl_batch_ep.setEnabled(True)
             self.spin_ep_from.setEnabled(True)
             self.spin_ep_to.setEnabled(True)
         else:
             self.txt_episode.setPlaceholderText("名称或编号 (可选) - 可留空")
-            # 非 ep 类型禁用批量创建
             self.btn_batch_episode.setEnabled(False)
-            self.lbl_batch_ep.setEnabled(False)
             self.spin_ep_from.setEnabled(False)
             self.spin_ep_to.setEnabled(False)
 
@@ -3171,16 +2681,13 @@ class CXProjectManager(QMainWindow):
         """Episode选择变化时更新Cut列表"""
         self.cmb_target_cut.clear()
 
-        # 如果没有选择Episode或配置不存在，直接返回
-        if not self.project_config or not episode or episode == "":
-            # 如果是单集模式，加载所有cuts
+        if not self.project_config or not episode:
             if self.project_config and self.project_config.get("no_episode", False):
                 cuts = self.project_config.get("cuts", [])
                 if cuts:
                     self.cmb_target_cut.addItems(sorted(cuts))
             return
 
-        # 获取该Episode的所有Cuts
         cuts = self.project_config.get("episodes", {}).get(episode, [])
         if cuts:
             self.cmb_target_cut.addItems(sorted(cuts))
@@ -3189,35 +2696,23 @@ class CXProjectManager(QMainWindow):
         """切换Episode模式"""
         no_episode = self.chk_no_episode.isChecked()
 
-        # 更新Episode管理组的状态
         if no_episode:
-            # 单集模式：只允许创建特殊类型的Episode
             self.episode_group.setEnabled(True)
             self.episode_group.setTitle("🎬 特殊 Episode 管理 (op/ed/pv等)")
-            # 如果当前选择的是ep类型，切换到其他类型
             if self.cmb_episode_type.currentText().lower() == "ep":
                 self.cmb_episode_type.setCurrentText("pv")
         else:
-            # 标准模式：允许所有类型
             self.episode_group.setEnabled(True)
             self.episode_group.setTitle("🎬 Episode 管理")
 
-        # 更新Cut Episode下拉框的显示
-        self.cmb_cut_episode.setVisible(True)  # 始终显示
+        self.cmb_cut_episode.setVisible(True)
         if no_episode:
             self.cmb_cut_episode.setPlaceholderText("选择特殊 Episode (可选)")
         else:
             self.cmb_cut_episode.setPlaceholderText("选择 Episode")
 
-        # 更新导入面板的Episode显示
-        self.cmb_target_episode.setVisible(True)  # 始终显示
-        self.lbl_target_episode.setVisible(True)
-        if no_episode:
-            self.lbl_target_episode.setText("特殊 Ep:")
-        else:
-            self.lbl_target_episode.setText("Episode:")
+        self.cmb_target_episode.setVisible(True)
 
-        # 更新配置
         if self.project_config:
             self.project_config["no_episode"] = no_episode
             self.project_manager.project_config = self.project_config
@@ -3227,43 +2722,22 @@ class CXProjectManager(QMainWindow):
 
     def _enable_controls(self, enabled: bool):
         """启用/禁用控件"""
-        operation_controls = [
-            self.chk_no_episode,
-            self.episode_group,
-            self.cmb_episode_type,
-            self.txt_episode,
-            self.btn_create_episode,
-            self.btn_batch_episode,
-            self.lbl_batch_ep,
-            self.spin_ep_from,
-            self.spin_ep_to,
-            self.cmb_cut_episode,
-            self.txt_cut,
-            self.btn_create_cut,
-            self.btn_batch_cut,
-            self.spin_cut_from,
-            self.spin_cut_to,
-            self.btn_create_reuse_cut,
-            self.btn_browse_bg,
-            self.btn_browse_cell,
-            self.btn_browse_3dcg,
-            self.btn_browse_timesheet,
-            self.btn_import_single,
-            self.btn_import_all,
-            self.btn_copy_aep,
-            self.btn_batch_copy_aep,
-            self.cmb_target_episode,
-            self.cmb_target_cut,
-            self.txt_bg_path,
-            self.txt_cell_path,
-            self.txt_3dcg_path,
-            self.txt_timesheet_path,
+        controls = [
+            self.chk_no_episode, self.episode_group, self.cmb_episode_type,
+            self.txt_episode, self.btn_create_episode, self.btn_batch_episode,
+            self.spin_ep_from, self.spin_ep_to, self.cmb_cut_episode,
+            self.txt_cut, self.btn_create_cut, self.btn_batch_cut,
+            self.spin_cut_from, self.spin_cut_to, self.btn_create_reuse_cut,
+            self.cmb_target_episode, self.cmb_target_cut
         ]
 
-        for control in operation_controls:
-            control.setEnabled(enabled)
+        controls.extend(self.material_paths.values())
+        controls.extend(self.material_buttons.values())
 
-        # 如果启用，还需要根据当前状态调整某些控件
+        for control in controls:
+            if control:
+                control.setEnabled(enabled)
+
         if enabled and hasattr(self, 'cmb_episode_type'):
             self._on_episode_type_changed(self.cmb_episode_type.currentText())
 
@@ -3275,8 +2749,7 @@ class CXProjectManager(QMainWindow):
             return
 
         def add_items(parent_item: QTreeWidgetItem, path: Path, depth: int = 0):
-            """递归添加目录项"""
-            if depth > 5:  # 限制深度
+            if depth > 5:
                 return
 
             try:
@@ -3295,13 +2768,29 @@ class CXProjectManager(QMainWindow):
             except PermissionError:
                 pass
 
-        # 添加根节点
         root_item = QTreeWidgetItem([self.project_base.name])
         self.tree.addTopLevelItem(root_item)
         add_items(root_item, self.project_base)
-
-        # 展开到适当深度
         self.tree.expandToDepth(2)
+
+    def _on_tree_item_double_clicked(self, item: QTreeWidgetItem, column: int):
+        """树节点双击事件"""
+        # 获取完整路径
+        path_parts = []
+        current = item
+        while current:
+            path_parts.insert(0, current.text(0))
+            current = current.parent()
+
+        # 构建完整路径
+        if path_parts:
+            # 第一个部分是项目名，需要使用项目基础路径
+            full_path = self.project_base
+            for part in path_parts[1:]:  # 跳过项目名
+                full_path = full_path / part
+
+            if full_path.exists():
+                open_in_file_manager(full_path)
 
     def _update_import_combos(self):
         """更新导入面板的下拉列表"""
@@ -3312,19 +2801,15 @@ class CXProjectManager(QMainWindow):
             return
 
         if self.project_config.get("no_episode", False):
-            # 单集模式
-            # 添加特殊Episodes（如果有）
             episodes = self.project_config.get("episodes", {})
             if episodes:
                 self.cmb_target_episode.addItems(sorted(episodes.keys()))
                 self.cmb_target_episode.setCurrentIndex(-1)
 
-            # 添加所有Cuts（包括根目录下的）
             cuts = self.project_config.get("cuts", [])
             if cuts:
                 self.cmb_target_cut.addItems(sorted(cuts))
         else:
-            # 标准模式
             episodes = self.project_config.get("episodes", {})
             if episodes:
                 self.cmb_target_episode.addItems(sorted(episodes.keys()))
@@ -3335,14 +2820,12 @@ class CXProjectManager(QMainWindow):
         if not self.project_config:
             return
 
-        # 收集统计数据
         stats_lines = []
         stats_lines.append(f"项目名称: {self.project_config.get('project_name', 'Unknown')}")
         stats_lines.append(f"创建时间: {self.project_config.get('created_time', 'Unknown')[:10]}")
         stats_lines.append(f"最后修改: {self.project_config.get('last_modified', 'Unknown')[:10]}")
         stats_lines.append("")
 
-        # 兼用卡统计
         reuse_cuts = self.project_config.get("reuse_cuts", [])
         if reuse_cuts:
             stats_lines.append(f"兼用卡数量: {len(reuse_cuts)}")
@@ -3351,12 +2834,10 @@ class CXProjectManager(QMainWindow):
             stats_lines.append("")
 
         if self.project_config.get("no_episode", False):
-            # 单集模式统计
             cuts = self.project_config.get("cuts", [])
             stats_lines.append(f"模式: 单集/PV 模式")
             stats_lines.append(f"根目录 Cut 数: {len(cuts)}")
 
-            # 特殊Episode统计
             episodes = self.project_config.get("episodes", {})
             if episodes:
                 special_count = sum(len(cuts) for cuts in episodes.values())
@@ -3366,12 +2847,8 @@ class CXProjectManager(QMainWindow):
                 stats_lines.append("特殊 Episode 详情:")
                 for ep_id in sorted(episodes.keys()):
                     cut_count = len(episodes[ep_id])
-                    if cut_count > 0:
-                        stats_lines.append(f"  {ep_id}: {cut_count} cuts")
-                    else:
-                        stats_lines.append(f"  {ep_id}: (空)")
+                    stats_lines.append(f"  {ep_id}: {cut_count} cuts" if cut_count > 0 else f"  {ep_id}: (空)")
         else:
-            # 标准模式统计
             episodes = self.project_config.get("episodes", {})
             total_cuts = sum(len(cuts) for cuts in episodes.values())
 
@@ -3384,12 +2861,8 @@ class CXProjectManager(QMainWindow):
                 stats_lines.append("Episode 详情:")
                 for ep_id in sorted(episodes.keys()):
                     cut_count = len(episodes[ep_id])
-                    if cut_count > 0:
-                        stats_lines.append(f"  {ep_id}: {cut_count} cuts")
-                    else:
-                        stats_lines.append(f"  {ep_id}: (空)")
+                    stats_lines.append(f"  {ep_id}: {cut_count} cuts" if cut_count > 0 else f"  {ep_id}: (空)")
 
-        # 显示兼用卡详情
         if reuse_cuts:
             stats_lines.append("")
             stats_lines.append("兼用卡详情:")
@@ -3398,7 +2871,6 @@ class CXProjectManager(QMainWindow):
                 ep_info = f" ({cut.episode_id})" if cut.episode_id else ""
                 stats_lines.append(f"  {cut.get_display_name()}{ep_info}")
 
-        # 更新统计显示
         self.txt_project_stats.setText("\n".join(stats_lines))
 
     def _update_browser_tree(self):
@@ -3412,19 +2884,15 @@ class CXProjectManager(QMainWindow):
         reuse_cuts_map = {}
         for cut_data in self.project_config.get("reuse_cuts", []):
             cut = ReuseCut.from_dict(cut_data)
-            # 只将兼用卡映射到它实际所属的位置
             if cut.episode_id:
-                # 如果兼用卡属于某个Episode，只在该Episode下的cuts中标记
                 for cut_id in cut.cuts:
                     reuse_cuts_map[f"{cut.episode_id}:{cut_id}"] = cut
             else:
-                # 如果兼用卡属于根目录，只在根目录的cuts中标记
                 for cut_id in cut.cuts:
                     reuse_cuts_map[f"root:{cut_id}"] = cut
 
         # 单集模式
         if self.project_config.get("no_episode", False):
-            # 添加根目录下的Cuts
             cuts = self.project_config.get("cuts", [])
             if cuts:
                 root_item = QTreeWidgetItem(["根目录 Cuts"])
@@ -3432,13 +2900,12 @@ class CXProjectManager(QMainWindow):
                 self.browser_tree.addTopLevelItem(root_item)
 
                 for cut_id in sorted(cuts):
-                    # 检查是否是根目录的兼用卡
                     key = f"root:{cut_id}"
                     if key in reuse_cuts_map:
                         cut = reuse_cuts_map[key]
                         display_name = f"{cut_id} [兼用卡: {cut.get_display_name()}]"
                         item = QTreeWidgetItem([display_name])
-                        item.setForeground(0, QBrush(QColor("#FF9800")))  # 橙色
+                        item.setForeground(0, QBrush(QColor("#FF9800")))
                     else:
                         item = QTreeWidgetItem([cut_id])
 
@@ -3447,7 +2914,7 @@ class CXProjectManager(QMainWindow):
 
                 root_item.setExpanded(True)
 
-            # 添加特殊Episodes
+            # 特殊Episodes
             episodes = self.project_config.get("episodes", {})
             if episodes:
                 for ep_id in sorted(episodes.keys()):
@@ -3455,15 +2922,13 @@ class CXProjectManager(QMainWindow):
                     ep_item.setData(0, Qt.UserRole, {"episode": ep_id})
                     self.browser_tree.addTopLevelItem(ep_item)
 
-                    # 添加该Episode下的Cuts
                     for cut_id in sorted(episodes[ep_id]):
-                        # 检查是否是该Episode的兼用卡
                         key = f"{ep_id}:{cut_id}"
                         if key in reuse_cuts_map:
                             cut = reuse_cuts_map[key]
                             display_name = f"{cut_id} [兼用卡: {cut.get_display_name()}]"
                             cut_item = QTreeWidgetItem([display_name])
-                            cut_item.setForeground(0, QBrush(QColor("#FF9800")))  # 橙色
+                            cut_item.setForeground(0, QBrush(QColor("#FF9800")))
                         else:
                             cut_item = QTreeWidgetItem([cut_id])
 
@@ -3479,15 +2944,13 @@ class CXProjectManager(QMainWindow):
                 ep_item.setData(0, Qt.UserRole, {"episode": ep_id})
                 self.browser_tree.addTopLevelItem(ep_item)
 
-                # 添加该Episode下的Cuts
                 for cut_id in sorted(episodes[ep_id]):
-                    # 检查是否是该Episode的兼用卡
                     key = f"{ep_id}:{cut_id}"
                     if key in reuse_cuts_map:
                         cut = reuse_cuts_map[key]
                         display_name = f"{cut_id} [兼用卡: {cut.get_display_name()}]"
                         cut_item = QTreeWidgetItem([display_name])
-                        cut_item.setForeground(0, QBrush(QColor("#FF9800")))  # 橙色
+                        cut_item.setForeground(0, QBrush(QColor("#FF9800")))
                     else:
                         cut_item = QTreeWidgetItem([cut_id])
 
@@ -3507,7 +2970,6 @@ class CXProjectManager(QMainWindow):
         if not self.project_config:
             return
 
-        # 添加所有Episodes（无论是否单集模式）
         episodes = self.project_config.get("episodes", {})
         if episodes:
             self.cmb_cut_episode.addItems(sorted(episodes.keys()))
@@ -3519,18 +2981,12 @@ class CXProjectManager(QMainWindow):
         if not data:
             return
 
-        # 如果点击的是Cut节点
         if "cut" in data and data["cut"]:
             self.current_cut_id = data["cut"]
             self.current_episode_id = data.get("episode")
-
-            # 加载文件列表
             self._load_cut_files(self.current_cut_id, self.current_episode_id)
-
-            # 更新路径显示
             self._update_current_path_label()
         else:
-            # 点击的是Episode节点或根节点，清空文件列表
             self._clear_file_lists()
             self.current_cut_id = None
             self.current_episode_id = data.get("episode")
@@ -3550,7 +3006,6 @@ class CXProjectManager(QMainWindow):
             self.current_path = None
             return
 
-        # 获取当前Tab索引和名称
         current_index = self.file_tabs.currentIndex()
         tab_names = ["VFX", "Cell", "BG", "Render", "3DCG"]
 
@@ -3581,7 +3036,6 @@ class CXProjectManager(QMainWindow):
             elif tab_name == "3DCG":
                 path = self.project_base / self.current_episode_id / "02_3dcg" / actual_cut_id
         else:
-            # 无Episode模式
             if tab_name in ["VFX", "Cell", "BG"]:
                 path = self.project_base / "01_vfx" / actual_cut_id
                 if tab_name == "Cell":
@@ -3593,10 +3047,7 @@ class CXProjectManager(QMainWindow):
             elif tab_name == "3DCG":
                 path = self.project_base / "02_3dcg" / actual_cut_id
 
-        # 保存当前路径
         self.current_path = path
-
-        # 格式化路径显示
         path_str = str(path).replace("\\", "/")
 
         # 如果路径太长，显示缩略版本
@@ -3606,7 +3057,6 @@ class CXProjectManager(QMainWindow):
         else:
             display_path = path_str
 
-        # 更新标签
         if reuse_cut:
             self.lbl_current_cut.setText(f"📁 {tab_name} [兼用卡 {display_cut_id}]: {display_path}")
         else:
@@ -3620,17 +3070,14 @@ class CXProjectManager(QMainWindow):
 
         menu = QMenu(self)
 
-        # 复制路径
         act_copy = QAction("复制路径", self)
         act_copy.triggered.connect(lambda: QApplication.clipboard().setText(str(self.current_path)))
         menu.addAction(act_copy)
 
-        # 在文件管理器中打开
         act_open = QAction("在文件管理器中打开", self)
         act_open.triggered.connect(lambda: open_in_file_manager(self.current_path))
         menu.addAction(act_open)
 
-        # 显示菜单
         menu.exec_(self.lbl_current_cut.mapToGlobal(position))
 
     def _load_cut_files(self, cut_id: str, episode_id: Optional[str] = None):
@@ -3642,12 +3089,9 @@ class CXProjectManager(QMainWindow):
 
         # 检查是否是兼用卡
         reuse_cut = self.project_manager.get_reuse_cut_for_cut(cut_id)
-        if reuse_cut:
-            actual_cut_id = reuse_cut.main_cut
-        else:
-            actual_cut_id = cut_id
+        actual_cut_id = reuse_cut.main_cut if reuse_cut else cut_id
 
-        # 确定各路径
+        # 确定路径
         if episode_id:
             vfx_path = self.project_base / episode_id / "01_vfx" / actual_cut_id
             render_path = self.project_base / "06_render" / episode_id / actual_cut_id
@@ -3657,82 +3101,78 @@ class CXProjectManager(QMainWindow):
             render_path = self.project_base / "06_render" / actual_cut_id
             cg_path = self.project_base / "02_3dcg" / actual_cut_id
 
-        # 加载各种文件类型
+        # 加载文件
         self._load_vfx_files(vfx_path)
         self._load_cell_files(vfx_path / "cell")
         self._load_bg_files(vfx_path / "bg")
         self._load_render_files(render_path)
         self._load_cg_files(cg_path)
 
-        # 更新Tab标题显示文件数量
         self._update_file_tab_titles()
 
     def _load_vfx_files(self, vfx_path: Path):
         """加载VFX文件"""
+        list_widget = self.file_lists["vfx"]
         if vfx_path.exists():
-            self.vfx_list.load_files(vfx_path, "*.aep")
+            list_widget.load_files(vfx_path, "*.aep")
 
-        if self.vfx_list.count() == 0:
+        if list_widget.count() == 0:
             item = QListWidgetItem("(没有 AEP 文件)")
             item.setData(Qt.UserRole, None)
             item.setFlags(item.flags() & ~Qt.ItemIsEnabled)
-            self.vfx_list.addItem(item)
+            list_widget.addItem(item)
 
     def _load_cell_files(self, cell_path: Path):
-        """加载Cell文件 - 仅显示带版本号的文件夹"""
+        """加载Cell文件"""
+        list_widget = self.file_lists["cell"]
         if not cell_path.exists():
             return
 
-        # 收集所有Cell文件夹
         folders = []
         for folder in cell_path.iterdir():
             if folder.is_dir():
                 file_info = get_file_info(folder)
-                # 只添加带版本号的文件夹
                 if file_info.version is not None:
                     folders.append(file_info)
 
-        # 按修改时间排序（最新的在前）
         folders.sort(key=lambda f: f.modified_time, reverse=True)
 
-        # 添加到列表
         for folder_info in folders:
-            self.cell_list.add_file_item(folder_info)
+            list_widget.add_file_item(folder_info)
 
-        if self.cell_list.count() == 0:
+        if list_widget.count() == 0:
             item = QListWidgetItem("(没有 Cell 文件夹)")
             item.setData(Qt.UserRole, None)
             item.setFlags(item.flags() & ~Qt.ItemIsEnabled)
-            self.cell_list.addItem(item)
+            list_widget.addItem(item)
 
     def _load_bg_files(self, bg_path: Path):
         """加载BG文件"""
+        list_widget = self.file_lists["bg"]
         if not bg_path.exists():
             return
 
-        # 收集所有BG文件
         files = []
         for file in bg_path.iterdir():
             if file.is_file() and file.suffix.lower() in IMAGE_EXTENSIONS:
                 files.append(get_file_info(file))
 
-        # 按修改时间排序（最新的在前）
         files.sort(key=lambda f: f.modified_time, reverse=True)
 
-        # 添加到列表
         for file_info in files:
-            self.bg_list.add_file_item(file_info)
+            list_widget.add_file_item(file_info)
 
-        if self.bg_list.count() == 0:
+        if list_widget.count() == 0:
             item = QListWidgetItem("(没有 BG 文件)")
             item.setData(Qt.UserRole, None)
             item.setFlags(item.flags() & ~Qt.ItemIsEnabled)
-            self.bg_list.addItem(item)
+            list_widget.addItem(item)
 
     def _load_render_files(self, render_path: Path):
         """加载渲染文件"""
+        list_widget = self.file_lists["render"]
+
         if not render_path.exists():
-            # 如果render目录都不存在，显示未渲染
             no_render_info = FileInfo(
                 path=render_path,
                 name="未渲染",
@@ -3741,16 +3181,15 @@ class CXProjectManager(QMainWindow):
                 is_folder=False,
                 is_no_render=True
             )
-            self.render_list.add_file_item(no_render_info)
+            list_widget.add_file_item(no_render_info)
             return
 
         render_items = []
         has_any_render = False
 
-        # PNG序列文件夹
+        # PNG序列
         png_path = render_path / "png_seq"
         if png_path.exists() and any(png_path.glob("*.png")):
-            # 有PNG序列
             render_items.append(get_png_seq_info(png_path))
             has_any_render = True
 
@@ -3771,47 +3210,43 @@ class CXProjectManager(QMainWindow):
         if has_any_render:
             render_items.sort(key=lambda f: f.modified_time, reverse=True)
 
-        # 添加到列表
         for item_info in render_items:
-            self.render_list.add_file_item(item_info)
+            list_widget.add_file_item(item_info)
 
     def _load_cg_files(self, cg_path: Path):
-        """加载3DCG文件 - 递归加载所有文件"""
+        """加载3DCG文件"""
+        list_widget = self.file_lists["3dcg"]
         if not cg_path.exists():
             return
 
-        # 递归加载所有文件
         files = []
         for item in cg_path.rglob("*"):
             if item.is_file():
                 files.append(get_file_info(item))
 
-        # 按修改时间排序（最新的在前）
         files.sort(key=lambda f: f.modified_time, reverse=True)
 
-        # 添加到列表
         for file_info in files:
-            self.cg_list.add_file_item(file_info)
+            list_widget.add_file_item(file_info)
 
-        if self.cg_list.count() == 0:
+        if list_widget.count() == 0:
             item = QListWidgetItem("(没有 3DCG 文件)")
             item.setData(Qt.UserRole, None)
             item.setFlags(item.flags() & ~Qt.ItemIsEnabled)
-            self.cg_list.addItem(item)
+            list_widget.addItem(item)
 
     def _update_file_tab_titles(self):
-        """更新文件Tab的标题，显示文件数量"""
+        """更新文件Tab的标题"""
         tab_info = [
-            (0, "VFX", self.vfx_list),
-            (1, "Cell", self.cell_list),
-            (2, "BG", self.bg_list),
-            (3, "Render", self.render_list),
-            (4, "3DCG", self.cg_list),
+            (0, "VFX", self.file_lists["vfx"]),
+            (1, "Cell", self.file_lists["cell"]),
+            (2, "BG", self.file_lists["bg"]),
+            (3, "Render", self.file_lists["render"]),
+            (4, "3DCG", self.file_lists["3dcg"]),
         ]
 
         for index, name, list_widget in tab_info:
             count = list_widget.count()
-            # 检查是否有实际文件（排除"没有文件"提示项）
             if count > 0 and list_widget.item(0).data(Qt.UserRole) is not None:
                 self.file_tabs.setTabText(index, f"{name} ({count})")
             else:
@@ -3819,13 +3254,9 @@ class CXProjectManager(QMainWindow):
 
     def _clear_file_lists(self):
         """清空所有文件列表"""
-        self.vfx_list.clear()
-        self.cell_list.clear()
-        self.bg_list.clear()
-        self.render_list.clear()
-        self.cg_list.clear()
+        for list_widget in self.file_lists.values():
+            list_widget.clear()
 
-        # 重置Tab标题
         for i, name in enumerate(["VFX", "Cell", "BG", "Render", "3DCG"]):
             self.file_tabs.setTabText(i, name)
 
@@ -3839,12 +3270,9 @@ class CXProjectManager(QMainWindow):
         if not path.exists():
             return
 
-        # 检查是否是视频文件
         if path.suffix.lower() in VIDEO_EXTENSIONS:
-            # 使用默认播放器播放视频
             self._play_video(path)
         else:
-            # 其他文件在文件管理器中打开
             open_in_file_manager(path)
 
     def _play_video(self, video_path: Path):
@@ -3853,9 +3281,9 @@ class CXProjectManager(QMainWindow):
         try:
             if system == "Windows":
                 os.startfile(str(video_path))
-            elif system == "Darwin":  # macOS
+            elif system == "Darwin":
                 subprocess.run(["open", str(video_path)])
-            else:  # Linux
+            else:
                 subprocess.run(["xdg-open", str(video_path)])
         except Exception as e:
             print(f"播放视频失败: {e}")
@@ -3872,7 +3300,7 @@ class CXProjectManager(QMainWindow):
         match_count = 0
         first_match = None
 
-        # 获取兼用卡信息，并根据episode_id分组
+        # 获取兼用卡信息
         reuse_cuts_by_location = {"root": [], "episodes": {}}
         for cut_data in self.project_config.get("reuse_cuts", []):
             cut = ReuseCut.from_dict(cut_data)
@@ -3883,39 +3311,32 @@ class CXProjectManager(QMainWindow):
             else:
                 reuse_cuts_by_location["root"].append(cut)
 
-        # 递归搜索并显示匹配的项目
         def search_items(item: QTreeWidgetItem):
             nonlocal match_count, first_match
             item_text = item.text(0).lower()
 
-            # 获取Cut ID和Episode ID
             data = item.data(0, Qt.UserRole)
             cut_id = data.get("cut") if data else None
             episode_id = data.get("episode") if data else None
 
-            # 智能匹配
             has_match = False
             if search_text in item_text:
                 has_match = True
             elif search_text.isdigit() and cut_id:
-                # 数字智能匹配
                 if search_text in cut_id:
                     has_match = True
-                # 检查兼用卡匹配
+
+                # 检查兼用卡
                 if episode_id:
-                    # 检查该Episode的兼用卡
                     for cut in reuse_cuts_by_location["episodes"].get(episode_id, []):
                         if cut.contains_cut(cut_id):
-                            # 检查兼用卡中的任意Cut是否匹配
                             for reuse_cut in cut.cuts:
                                 if search_text in reuse_cut:
                                     has_match = True
                                     break
                 else:
-                    # 检查根目录的兼用卡
                     for cut in reuse_cuts_by_location["root"]:
                         if cut.contains_cut(cut_id):
-                            # 检查兼用卡中的任意Cut是否匹配
                             for reuse_cut in cut.cuts:
                                 if search_text in reuse_cut:
                                     has_match = True
@@ -3923,17 +3344,14 @@ class CXProjectManager(QMainWindow):
 
             has_child_match = False
 
-            # 检查子项
             for i in range(item.childCount()):
                 child = item.child(i)
                 if search_items(child):
                     has_child_match = True
 
-            # 如果自身匹配或有子项匹配，则显示
             should_show = has_match or has_child_match
             item.setHidden(not should_show)
 
-            # 高亮显示匹配的项目
             if has_match and item.childCount() == 0:
                 item.setForeground(0, QBrush(QColor("#4CAF50")))
                 item.setFont(0, QFont("MiSans", -1, QFont.Bold))
@@ -3941,9 +3359,8 @@ class CXProjectManager(QMainWindow):
                 if first_match is None:
                     first_match = item
             else:
-                # 恢复原始样式（考虑兼用卡的橙色）
+                # 恢复原始样式
                 if cut_id:
-                    # 检查是否是兼用卡
                     is_reuse = False
                     if episode_id:
                         for cut in reuse_cuts_by_location["episodes"].get(episode_id, []):
@@ -3957,24 +3374,21 @@ class CXProjectManager(QMainWindow):
                                 break
 
                     if is_reuse:
-                        item.setForeground(0, QBrush(QColor("#FF9800")))  # 兼用卡保持橙色
+                        item.setForeground(0, QBrush(QColor("#FF9800")))
                     else:
                         item.setForeground(0, QBrush())
                 else:
                     item.setForeground(0, QBrush())
                 item.setFont(0, QFont())
 
-            # 如果有子项匹配，展开该项
             if has_child_match:
                 item.setExpanded(True)
 
             return should_show
 
-        # 对所有顶级项目进行搜索
         for i in range(self.browser_tree.topLevelItemCount()):
             search_items(self.browser_tree.topLevelItem(i))
 
-        # 更新标题显示搜索结果数
         if match_count > 0:
             self.browser_tree.setHeaderLabel(f"搜索结果: {match_count} 个Cut")
         else:
@@ -3983,7 +3397,6 @@ class CXProjectManager(QMainWindow):
     def _select_first_match(self):
         """选择第一个匹配的Cut"""
 
-        # 查找第一个可见的叶子节点
         def find_first_visible_leaf(item: QTreeWidgetItem):
             if not item.isHidden():
                 if item.childCount() == 0:
@@ -3994,7 +3407,6 @@ class CXProjectManager(QMainWindow):
                         return result
             return None
 
-        # 搜索所有顶级项目
         for i in range(self.browser_tree.topLevelItemCount()):
             result = find_first_visible_leaf(self.browser_tree.topLevelItem(i))
             if result:
@@ -4002,14 +3414,8 @@ class CXProjectManager(QMainWindow):
                 self._on_browser_tree_clicked(result)
                 break
 
-    def _clear_cut_search(self):
-        """清除Cut搜索"""
-        self.txt_cut_search.clear()
-        self._show_all_tree_items()
-
     def _show_all_tree_items(self):
         """显示所有树项目"""
-        # 获取兼用卡信息，并根据episode_id分组
         reuse_cuts_by_location = {"root": [], "episodes": {}}
         for cut_data in self.project_config.get("reuse_cuts", []):
             cut = ReuseCut.from_dict(cut_data)
@@ -4021,17 +3427,13 @@ class CXProjectManager(QMainWindow):
                 reuse_cuts_by_location["root"].append(cut)
 
         def show_items(item: QTreeWidgetItem):
-            """递归显示所有项目"""
             item.setHidden(False)
 
-            # 获取Cut ID和Episode ID
             data = item.data(0, Qt.UserRole)
             cut_id = data.get("cut") if data else None
             episode_id = data.get("episode") if data else None
 
-            # 重置样式（考虑兼用卡）
             if cut_id:
-                # 检查是否是兼用卡
                 is_reuse = False
                 if episode_id:
                     for cut in reuse_cuts_by_location["episodes"].get(episode_id, []):
@@ -4045,7 +3447,7 @@ class CXProjectManager(QMainWindow):
                             break
 
                 if is_reuse:
-                    item.setForeground(0, QBrush(QColor("#FF9800")))  # 兼用卡保持橙色
+                    item.setForeground(0, QBrush(QColor("#FF9800")))
                 else:
                     item.setForeground(0, QBrush())
             else:
@@ -4056,19 +3458,15 @@ class CXProjectManager(QMainWindow):
             for i in range(item.childCount()):
                 show_items(item.child(i))
 
-        # 显示所有顶级项目
         for i in range(self.browser_tree.topLevelItemCount()):
             show_items(self.browser_tree.topLevelItem(i))
 
-        # 恢复原始标题
         self.browser_tree.setHeaderLabel("选择要浏览的 Cut")
 
     def _focus_cut_search(self):
         """聚焦到Cut搜索框"""
         if self.txt_cut_search:
-            # 切换到项目浏览Tab
             self.tabs.setCurrentIndex(1)
-            # 聚焦到搜索框
             self.txt_cut_search.setFocus()
             self.txt_cut_search.selectAll()
 
@@ -4076,12 +3474,10 @@ class CXProjectManager(QMainWindow):
 
     def _load_app_settings(self):
         """加载软件设置"""
-        # 窗口几何
         geometry = self.app_settings.value("window_geometry")
         if geometry:
             self.restoreGeometry(geometry)
 
-        # 更新默认路径提示
         default_path = self.app_settings.value("default_project_path", "")
         if default_path and Path(default_path).exists():
             self.btn_new_project.setToolTip(f"将创建到: {default_path}")
@@ -4090,7 +3486,6 @@ class CXProjectManager(QMainWindow):
             self.btn_new_project.setToolTip("点击后选择创建位置")
             self.statusbar.showMessage("未设置默认项目路径，新建项目时需要选择位置")
 
-        # 最后打开的项目
         last_project = self.app_settings.value("last_project")
         if last_project and Path(last_project).exists():
             self._load_project(last_project)
@@ -4104,16 +3499,17 @@ class CXProjectManager(QMainWindow):
     def set_default_path(self):
         """设置默认项目路径"""
         current = self.app_settings.value("default_project_path", "")
-        folder = QFileDialog.getExistingDirectory(
-            self, "设置默认项目路径", current
-        )
+        folder = QFileDialog.getExistingDirectory(self, "设置默认项目路径", current)
 
         if folder:
             self.app_settings.setValue("default_project_path", folder)
             self.btn_new_project.setToolTip(f"将创建到: {folder}")
-            QMessageBox.information(
-                self, "成功", f"默认项目路径已设置为:\n{folder}"
-            )
+
+            # 更新项目注册管理器的路径
+            self.project_registry.registry_path = self.project_registry._get_registry_path()
+            self.project_registry.load_registry()
+
+            QMessageBox.information(self, "成功", f"默认项目路径已设置为:\n{folder}")
 
     def _update_recent_menu(self):
         """更新最近项目菜单"""
@@ -4130,32 +3526,24 @@ class CXProjectManager(QMainWindow):
                 action = self.recent_menu.addAction(Path(path).name)
                 action.setShortcut("Ctrl+R")
                 action.setToolTip(path)
-                action.triggered.connect(
-                    lambda checked, p=path: self.open_recent_project(p)
-                )
+                action.triggered.connect(lambda checked, p=path: self.open_recent_project(p))
 
     def open_recent_project(self, path: str):
         """打开最近项目"""
         if Path(path).exists():
             self._load_project(path)
         else:
-            QMessageBox.warning(
-                self, "错误", f"项目路径不存在：\n{path}"
-            )
+            QMessageBox.warning(self, "错误", f"项目路径不存在：\n{path}")
             self._remove_from_recent(path)
 
     def _add_to_recent(self, path: str):
         """添加到最近项目"""
         recent = self.app_settings.value("recent_projects", [])
 
-        # 移除已存在的
         if path in recent:
             recent.remove(path)
 
-        # 添加到开头
         recent.insert(0, path)
-
-        # 限制数量
         recent = recent[:20]
 
         self.app_settings.setValue("recent_projects", recent)
@@ -4184,41 +3572,14 @@ CX Project Manager 使用说明
 
 版本: {version_info.get("version", "2.2")} {version_info.get("build-version", "")}
 
+## 新增功能
+- **项目注册管理**: 自动记录所有创建的项目信息
+- **项目浏览器**: 浏览和管理所有已注册的项目
+- **目录树双击**: 双击目录树节点直接打开文件夹
+
 ## 项目模式
-- **标准模式**: 支持创建多个Episode（ep01, ep02等），每个Episode下可创建多个Cut
-- **单集/PV模式**: 根目录下直接创建Cut，但支持创建特殊类型的Episode（op/ed/pv等）
-
-## 单集模式特点
-- 不能创建标准集数（ep类型）
-- 可以创建特殊类型：op, ed, pv, sp, ova, cm, sv, ex, nc
-- 特殊Episode下也可以包含Cut
-- 适合制作单集动画、PV、广告等项目
-
-## 兼用卡功能
-- 将多个Cut合并为兼用卡，共用同一套素材和AEP工程
-- 兼用卡的文件保存在最小编号的Cut文件夹中
-- 文件命名格式：项目名_EP(如果有)_Cut1_Cut2_Cut3_版本号
-- 在浏览器中用橙色标记兼用卡
-- 搜索任意兼用Cut编号都能找到对应的兼用卡
-- 支持带字母后缀的Cut编号（如100A, 100B）
-
-## 版本管理
-- BG和Cell导入时自动管理版本号（T1, T2, T3...）
-- AEP文件版本显示：V0显示"T摄"，V1以后显示"本摄Vx"
-- 可设置自动使用推荐版本号，跳过确认对话框
-- 文件按修改时间排序，最新的显示在最前面
-
-## 文件浏览
-- 完整文件名加粗显示在图标右侧
-- 显示文件修改时间和大小（弱化显示）
-- 所有文件类型都有专门的图标
-- Cell仅显示带版本号的文件夹
-- 3DCG Tab会递归显示所有文件
-- PNG序列显示第一张图片的缩略图
-- 没有渲染时显示"未渲染"状态
-- 支持TGA图片格式
-- 双击视频文件直接播放
-- 双击其他文件在资源管理器中打开
+- **标准模式**: 支持创建多个Episode（ep01, ep02等）
+- **单集/PV模式**: 根目录下直接创建Cut，支持特殊Episode
 
 ## 快捷键
 - Ctrl+N: 新建项目
@@ -4227,28 +3588,11 @@ CX Project Manager 使用说明
 - F5: 刷新目录树
 - Ctrl+Q: 退出
 
-## 素材导入
-- BG: 导入单个背景图像文件（支持psd, png, jpg, jpeg, tga, tiff, bmp, exr, dpx）
-- Cell: 导入包含分层素材的文件夹
-- 3DCG: 导入3D素材文件夹
-- Timesheet: 导入时间表CSV文件
-
-## 批量操作
-- 批量创建Episode（仅ep类型支持）
-- 批量创建Cut
-- 批量复制AEP模板（可选择跳过兼用卡）
-- 创建兼用卡
-
-## 项目结构
-项目创建后会自动生成标准化的目录结构，包括：
-- 00_reference_project: 参考资料
-- 01_vfx: VFX制作文件
-- 02_3dcg: 3D制作文件
-- 06_render: 渲染输出
-- 07_master_assets: 共用素材
-- 08_tools: 工具脚本
-- 98_tmp: 临时文件
-- 99_other: 其他文件
+## 项目注册
+- 创建项目时自动注册到项目管理系统
+- 记录项目名称、Episode数、创建时间、路径等信息
+- 通过"文件 > 浏览所有项目"查看所有已注册项目
+- 支持删除不需要的项目记录（仅删除记录，不删除文件）
 
 作者: {version_info.get("author", "千石まよひ")}
 """
@@ -4279,7 +3623,7 @@ GitHub: https://github.com/ChenxingM/CXProjectManager
 
 {version_info.get("description", "动画项目管理工具，专为动画制作流程优化设计。")}
 
-新增兼用卡功能，支持多个Cut共用素材，提高制作效率。
+新增项目注册管理系统，支持浏览和管理所有创建的项目。
 
 如有问题或建议，欢迎在GitHub提交Issue。"""
 
@@ -4291,198 +3635,6 @@ GitHub: https://github.com/ChenxingM/CXProjectManager
         event.accept()
 
 
-# ================================ 项目浏览器组件 ================================ #
-
-class ProjectBrowser(QWidget):
-    """独立的项目浏览器组件，可以在其他程序中导入使用"""
-
-    def __init__(self, project_path: Optional[str] = None, parent=None):
-        super().__init__(parent)
-        self.project_manager = ProjectManager()
-        self.project_base: Optional[Path] = None
-        self.project_config: Optional[Dict] = None
-
-        self._setup_ui()
-        self.setStyleSheet(QSS_THEME)
-
-        if project_path:
-            self.load_project(project_path)
-
-    def _setup_ui(self):
-        """设置UI"""
-        layout = QVBoxLayout(self)
-
-        # 项目统计
-        stats_group = QGroupBox("📊 项目统计")
-        stats_layout = QVBoxLayout(stats_group)
-
-        self.txt_stats = QTextEdit()
-        self.txt_stats.setReadOnly(True)
-        self.txt_stats.setMaximumHeight(150)
-        stats_layout.addWidget(self.txt_stats)
-        layout.addWidget(stats_group)
-
-        # 浏览器
-        splitter = QSplitter(Qt.Horizontal)
-
-        # 左侧树
-        self.tree = QTreeWidget()
-        self.tree.setHeaderLabel("Episode / Cut")
-        self.tree.itemClicked.connect(self._on_tree_clicked)
-
-        # 右侧文件列表
-        self.file_list = DetailedFileListWidget()
-
-        splitter.addWidget(self.tree)
-        splitter.addWidget(self.file_list)
-        layout.addWidget(splitter)
-
-    def load_project(self, project_path: str) -> bool:
-        """加载项目"""
-        path = Path(project_path)
-
-        if self.project_manager.load_project(path):
-            self.project_base = self.project_manager.project_base
-            self.project_config = self.project_manager.project_config
-            self._update_view()
-            return True
-        return False
-
-    def _update_view(self):
-        """更新视图"""
-        if not self.project_config:
-            return
-
-        # 更新统计
-        stats = f"项目: {self.project_config.get('project_name', 'Unknown')}\n"
-
-        # 兼用卡统计
-        reuse_cuts = self.project_config.get("reuse_cuts", [])
-        if reuse_cuts:
-            stats += f"兼用卡数量: {len(reuse_cuts)}\n"
-
-        if self.project_config.get("no_episode", False):
-            cuts = self.project_config.get("cuts", [])
-            stats += f"模式: 单集/PV模式\n"
-            stats += f"根目录 Cut 数: {len(cuts)}\n"
-
-            # 特殊Episode统计
-            episodes = self.project_config.get("episodes", {})
-            if episodes:
-                stats += f"特殊 Episode 数: {len(episodes)}"
-        else:
-            episodes = self.project_config.get("episodes", {})
-            total_cuts = sum(len(cuts) for cuts in episodes.values())
-            stats += f"Episodes: {len(episodes)}, Cuts: {total_cuts}"
-
-        self.txt_stats.setText(stats)
-
-        # 更新树
-        self._update_tree()
-
-    def _update_tree(self):
-        """更新树视图"""
-        self.tree.clear()
-
-        if not self.project_config:
-            return
-
-        # 获取兼用卡信息
-        reuse_cuts_map = {}
-        for cut_data in self.project_config.get("reuse_cuts", []):
-            cut = ReuseCut.from_dict(cut_data)
-            # 只将兼用卡映射到它实际所属的位置
-            if cut.episode_id:
-                # 如果兼用卡属于某个Episode，只在该Episode下的cuts中标记
-                for cut_id in cut.cuts:
-                    reuse_cuts_map[f"{cut.episode_id}:{cut_id}"] = cut
-            else:
-                # 如果兼用卡属于根目录，只在根目录的cuts中标记
-                for cut_id in cut.cuts:
-                    reuse_cuts_map[f"root:{cut_id}"] = cut
-
-        if self.project_config.get("no_episode", False):
-            # 单集模式：显示根目录Cuts和特殊Episodes
-            cuts = self.project_config.get("cuts", [])
-            if cuts:
-                root_item = QTreeWidgetItem(["根目录 Cuts"])
-                self.tree.addTopLevelItem(root_item)
-                for cut_id in sorted(cuts):
-                    # 检查是否是根目录的兼用卡
-                    key = f"root:{cut_id}"
-                    if key in reuse_cuts_map:
-                        cut = reuse_cuts_map[key]
-                        display_name = f"{cut_id} [兼用卡: {cut.get_display_name()}]"
-                        item = QTreeWidgetItem([display_name])
-                        item.setForeground(0, QBrush(QColor("#FF9800")))
-                    else:
-                        item = QTreeWidgetItem([cut_id])
-                    root_item.addChild(item)
-                root_item.setExpanded(True)
-
-            # 特殊Episodes
-            episodes = self.project_config.get("episodes", {})
-            for ep_id in sorted(episodes.keys()):
-                ep_item = QTreeWidgetItem([ep_id])
-                self.tree.addTopLevelItem(ep_item)
-                for cut_id in sorted(episodes[ep_id]):
-                    # 检查是否是该Episode的兼用卡
-                    key = f"{ep_id}:{cut_id}"
-                    if key in reuse_cuts_map:
-                        cut = reuse_cuts_map[key]
-                        display_name = f"{cut_id} [兼用卡: {cut.get_display_name()}]"
-                        item = QTreeWidgetItem([display_name])
-                        item.setForeground(0, QBrush(QColor("#FF9800")))
-                    else:
-                        item = QTreeWidgetItem([cut_id])
-                    ep_item.addChild(item)
-                ep_item.setExpanded(True)
-        else:
-            # 标准模式
-            episodes = self.project_config.get("episodes", {})
-            for ep_id in sorted(episodes.keys()):
-                ep_item = QTreeWidgetItem([ep_id])
-                self.tree.addTopLevelItem(ep_item)
-                for cut_id in sorted(episodes[ep_id]):
-                    # 检查是否是该Episode的兼用卡
-                    key = f"{ep_id}:{cut_id}"
-                    if key in reuse_cuts_map:
-                        cut = reuse_cuts_map[key]
-                        display_name = f"{cut_id} [兼用卡: {cut.get_display_name()}]"
-                        item = QTreeWidgetItem([display_name])
-                        item.setForeground(0, QBrush(QColor("#FF9800")))
-                    else:
-                        item = QTreeWidgetItem([cut_id])
-                    ep_item.addChild(item)
-                ep_item.setExpanded(True)
-
-    def _on_tree_clicked(self, item: QTreeWidgetItem):
-        """树节点点击事件"""
-        pass
-
-
-# ================================ 导出的组件 ================================ #
-
-__all__ = [
-    'CXProjectManager',
-    'ProjectBrowser',
-    'SearchLineEdit',
-    'BatchAepDialog',
-    'VersionConfirmDialog',
-    'ReuseCutDialog',
-    'DetailedFileListWidget',
-    'FileItemDelegate',
-    'ProjectManager',
-    'EpisodeType',
-    'ProjectPaths',
-    'MaterialType',
-    'FileInfo',
-    'ReuseCut',
-    'parse_cut_id',
-    'format_cut_id'
-]
-
-
 # ================================ 主程序入口 ================================ #
 
 def main():
@@ -4491,7 +3643,7 @@ def main():
     app.setApplicationName("CX Project Manager")
     app.setOrganizationName("CXStudio")
 
-    # 设置应用图标（可选）
+    # 设置应用图标
     icon_path = Path("_imgs/app_icon.png")
     if icon_path.exists():
         app.setWindowIcon(QIcon(str(icon_path)))

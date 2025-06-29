@@ -394,4 +394,17 @@ QComboBox QAbstractItemView {
     selection-background-color: #03A9F4;
     outline: none;
 }
+/* QTableView样式 */
+QTableView {
+    background-color: #262626;
+    border: 1px solid #3C3C3C;
+    border-radius: 4px;
+    outline: none;
+    alternate-background-color: #2F2F2F;  /* 隔行背景色 - 调亮一点 */
+}
+QTableView::item {
+    padding: 4px 8px;
+    background-color: transparent;
+}
+
 """
