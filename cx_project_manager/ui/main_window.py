@@ -1043,9 +1043,26 @@ class CXProjectManager(QMainWindow):
         # 检查模板目录
         template_dir = self.project_base / "07_master_assets" / "aep_templates"
         if not template_dir.exists() or not list(template_dir.glob("*.aep")):
-            QMessageBox.warning(
-                self, "错误", "07_master_assets/aep_templates 文件夹不存在或没有 AEP 模板文件"
-            )
+            # QMessageBox.warning(
+            #     self, "错误", "07_master_assets/aep_templates 文件夹不存在或没有 AEP 模板文件"
+            # )
+            open_tmp_aep = QMessageBox.question(self,"提示", "07_master_assets/aep_templates 文件夹不存在或没有 AEP 模板文件\n是否手动选择AEP模板？",
+                                 QMessageBox.Yes | QMessageBox.No, QMessageBox.No)
+            if open_tmp_aep == QMessageBox.Yes:
+                default_aep_template = self.app_settings.value("default_aep_template", "")
+                aep_path, _ = QFileDialog.getOpenFileName(
+                    self, "选择 AEP 模板", default_aep_template, "AEP 文件 (*.aep)"
+                )
+                if aep_path:
+                    self.app_settings.setValue("default_aep_template", aep_path)
+                    cut_path.mkdir(parents=True, exist_ok=True)
+                    if copy_file_safe(Path(aep_path), cut_path / Path(aep_path).name):
+                        QMessageBox.information(self, "成功", "已复制 AEP 模板")
+                        self._refresh_tree()
+                    return
+                else:
+                    QMessageBox.warning(self, "错误", "未选择 AEP 模板文件")
+                    return
             return
 
         # 复制模板
@@ -1082,10 +1099,21 @@ class CXProjectManager(QMainWindow):
 
         template_dir = self.project_base / "07_master_assets" / "aep_templates"
         if not template_dir.exists() or not list(template_dir.glob("*.aep")):
-            QMessageBox.warning(
-                self, "错误", "07_master_assets/aep_templates 文件夹不存在或没有 AEP 模板文件"
-            )
-            return
+            # QMessageBox.warning(
+            #     self, "错误", "07_master_assets/aep_templates 文件夹不存在或没有 AEP 模板文件"
+            # )
+            open_tmp_aep = QMessageBox.question(self, "提示",
+                                                "07_master_assets/aep_templates 文件夹不存在或没有 AEP 模板文件\n是否手动选择AEP模板？",
+                                                QMessageBox.Yes | QMessageBox.No, QMessageBox.No)
+            if open_tmp_aep == QMessageBox.Yes:
+                aep_path, _ = QFileDialog.getOpenFileName(
+                    self, "选择 AEP 模板", "", "AEP 文件 (*.aep)"
+                )
+                if template_dir:
+                    copy_file_safe(Path(aep_path), template_dir / Path(aep_path).name)
+                else:
+                    QMessageBox.warning(self, "错误", "未选择 AEP 模板文件")
+                    return
 
         dialog = BatchAepDialog(self.project_config, self)
         if dialog.exec() == QDialog.Accepted:

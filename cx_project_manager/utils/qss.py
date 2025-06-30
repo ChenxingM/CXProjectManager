@@ -6,6 +6,10 @@ QSS_THEME = """
     font-size: 13px;
 }
 
+QToolTip {
+    color: #101010;
+}
+
 QMainWindow, QWidget {
     background-color: #1E1E1E;
 }
