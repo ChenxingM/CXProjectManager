@@ -21,6 +21,13 @@ CX Project Manager - 动画项目管理工具
 
 Author: 千石まよひ
 GitHub: https://github.com/ChenxingM/CXProjectManager
+
+TODO:
+- 右键导入文件
+- 右键删除 锁定
+- 自动复制AEP模板到模版文件夹
+- 修改模板分辨率
+
 """
 
 import sys
