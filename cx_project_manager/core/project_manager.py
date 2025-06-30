@@ -122,6 +122,7 @@ class ProjectManager:
 - `06_render/` - 最终渲染输出
 - `07_master_assets/` - 共用素材
 - `08_tools/` - 自动化脚本与工具
+- `09_edit/` - 剪辑文件
 - `98_tmp/` - 临时文件
 - `99_other/` - 其他文件
 
@@ -323,3 +324,11 @@ class ProjectManager:
                 max_version = max(max_version, version)
 
         return max_version + 1
+
+    def get_all_episodes(self) -> List[str]:
+        """获取所有 Episode ID 列表"""
+        if not self.project_base:
+            return []
+
+        episodes = self.project_config.get("episodes", {})
+        return sorted(episodes.keys())

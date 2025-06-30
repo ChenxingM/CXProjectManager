@@ -10,7 +10,7 @@ import subprocess
 from datetime import datetime
 from functools import partial
 from pathlib import Path
-from typing import Dict, Optional, cast
+from typing import Dict, Optional, cast, List
 
 from PySide6.QtCore import Qt, QSettings, Signal
 from PySide6.QtGui import QAction, QBrush, QColor, QFont
@@ -27,7 +27,7 @@ from cx_project_manager.utils.constants import VIDEO_EXTENSIONS, IMAGE_EXTENSION
 from cx_project_manager.core import ProjectManager, ProjectRegistry
 from cx_project_manager.utils.models import FileInfo, ReuseCut
 from cx_project_manager.utils.utils import (
-    ensure_dir, copy_file_safe, open_in_file_manager, get_file_info, get_png_seq_info
+    ensure_dir, copy_file_safe, open_in_file_manager, get_file_info, get_png_seq_info, extract_version_from_filename
 )
 from .dialogs import (
     ProjectBrowserDialog, ReuseCutDialog, VersionConfirmDialog, BatchAepDialog
@@ -546,6 +546,7 @@ class CXProjectManager(QMainWindow):
             None,
             ("批量复制AEP模板...", None, self.batch_copy_aep_template),
             ("创建兼用卡...", None, self.create_reuse_cut),
+            ("复制MOV到剪辑文件夹", "Ctrl+M", self.copy_mov_to_cut_folder),
             None,
             ("在文件管理器中打开", None, self.open_in_explorer)
         ]
@@ -817,6 +818,245 @@ class CXProjectManager(QMainWindow):
                 self.statusbar.showMessage(message, 5000)
             else:
                 QMessageBox.warning(self, "错误", message)
+
+    def copy_mov_to_cut_folder(self):
+        """复制所有MOV文件到剪辑文件夹"""
+        if not self.project_base:
+            QMessageBox.warning(self, "错误", "请先打开或创建项目")
+            return
+
+        render_dir = self.project_base / "06_render"
+        if not render_dir.exists():
+            QMessageBox.warning(self, "错误", "06_render 文件夹不存在")
+            return
+
+        # 创建目标文件夹
+        footage_dir = self.project_base / "09_edit" / "footage"
+        ensure_dir(footage_dir)
+
+        # 统计信息
+        mov_files_by_episode = {}  # {episode_id: [(source_path, filename), ...]}
+        total_count = 0
+        total_size = 0
+
+        # 判断项目模式
+        no_episode = self.project_config.get("no_episode", False)
+
+        # 收集所有MOV文件并筛选最新版本
+        def get_latest_versions(mov_files):
+            """从MOV文件列表中获取每个cut的最新版本"""
+            # 按基础名称（不含版本号）分组
+            files_by_base = {}
+
+            for mov_file in mov_files:
+                filename = mov_file.stem
+                # 提取版本号
+                version = extract_version_from_filename(filename)
+
+                # 获取基础名称（去掉版本号部分）
+                if version is not None:
+                    # 查找 _v 的位置
+                    version_index = filename.rfind('_v')
+                    if version_index != -1:
+                        base_name = filename[:version_index]
+                    else:
+                        base_name = filename
+                else:
+                    base_name = filename
+                    version = 0  # 没有版本号的文件视为版本0
+
+                # 分组存储
+                if base_name not in files_by_base:
+                    files_by_base[base_name] = []
+                files_by_base[base_name].append((mov_file, version))
+
+            # 选择每组中版本号最高的文件
+            latest_files = []
+            for base_name, file_versions in files_by_base.items():
+                # 按版本号排序，取最高版本
+                file_versions.sort(key=lambda x: x[1], reverse=True)
+                latest_files.append(file_versions[0][0])  # 只取文件路径
+
+            return latest_files
+
+        if no_episode:
+            # 单集模式：直接在06_render下查找cut文件夹
+            cuts = self.project_config.get("cuts", [])
+
+            # 处理根目录下的cuts
+            root_mov_files = []
+            for cut_id in cuts:
+                cut_render_path = render_dir / cut_id / "prores"
+                if cut_render_path.exists():
+                    root_mov_files.extend(cut_render_path.glob("*.mov"))
+
+            if root_mov_files:
+                latest_files = get_latest_versions(root_mov_files)
+                mov_files_by_episode["root"] = [(f, f.name) for f in latest_files]
+                total_count += len(latest_files)
+                total_size += sum(f.stat().st_size for f in latest_files)
+
+            # 处理特殊episodes
+            episodes = self.project_config.get("episodes", {})
+            for ep_id, ep_cuts in episodes.items():
+                ep_render_path = render_dir / ep_id
+                if ep_render_path.exists():
+                    ep_mov_files = []
+                    for cut_id in ep_cuts:
+                        cut_render_path = ep_render_path / cut_id / "prores"
+                        if cut_render_path.exists():
+                            ep_mov_files.extend(cut_render_path.glob("*.mov"))
+
+                    if ep_mov_files:
+                        latest_files = get_latest_versions(ep_mov_files)
+                        mov_files_by_episode[ep_id] = [(f, f.name) for f in latest_files]
+                        total_count += len(latest_files)
+                        total_size += sum(f.stat().st_size for f in latest_files)
+        else:
+            # 标准Episode模式
+            episodes = self.project_config.get("episodes", {})
+            for ep_id, cuts in episodes.items():
+                ep_render_path = render_dir / ep_id
+                if ep_render_path.exists():
+                    ep_mov_files = []
+                    for cut_id in cuts:
+                        cut_render_path = ep_render_path / cut_id / "prores"
+                        if cut_render_path.exists():
+                            ep_mov_files.extend(cut_render_path.glob("*.mov"))
+
+                    if ep_mov_files:
+                        latest_files = get_latest_versions(ep_mov_files)
+                        mov_files_by_episode[ep_id] = [(f, f.name) for f in latest_files]
+                        total_count += len(latest_files)
+                        total_size += sum(f.stat().st_size for f in latest_files)
+
+        if total_count == 0:
+            QMessageBox.information(self, "提示", "没有找到任何 MOV 文件")
+            return
+
+        # 显示确认对话框
+        size_mb = total_size / (1024 * 1024)
+        episode_info = []
+
+        for ep_id, files in sorted(mov_files_by_episode.items()):
+            if ep_id == "root":
+                episode_info.append(f"根目录: {len(files)} 个文件（最新版本）")
+            else:
+                episode_info.append(f"{ep_id}: {len(files)} 个文件（最新版本）")
+
+        message = f"找到 {total_count} 个最新版本 MOV 文件（总大小: {size_mb:.1f} MB）\n\n"
+        message += "分布情况:\n" + "\n".join(episode_info)
+        message += "\n\n注意：只会复制每个Cut的最新版本（版本号最高的文件）"
+        message += "\n是否继续复制？"
+
+        reply = QMessageBox.question(
+            self, "确认复制",
+            message,
+            QMessageBox.Yes | QMessageBox.No
+        )
+
+        if reply != QMessageBox.Yes:
+            return
+
+        # 执行复制
+        copied_count = 0
+        skipped_count = 0
+        error_count = 0
+
+        # 创建进度对话框
+        from PySide6.QtWidgets import QProgressDialog
+
+        progress = QProgressDialog("正在复制最新版本 MOV 文件...", "取消", 0, total_count, self)
+        progress.setWindowModality(Qt.WindowModal)
+        progress.setMinimumDuration(0)
+
+        file_index = 0
+
+        try:
+            for ep_id, files in mov_files_by_episode.items():
+                # 创建episode子文件夹
+                if ep_id == "root":
+                    target_dir = footage_dir
+                else:
+                    target_dir = footage_dir / ep_id
+                    ensure_dir(target_dir)
+
+                for source_path, filename in files:
+                    if progress.wasCanceled():
+                        break
+
+                    progress.setValue(file_index)
+                    progress.setLabelText(f"正在复制: {filename}")
+                    QApplication.processEvents()
+
+                    target_path = target_dir / filename
+
+                    # 处理重名文件
+                    if target_path.exists():
+                        # 比较文件大小和修改时间
+                        source_stat = source_path.stat()
+                        target_stat = target_path.stat()
+
+                        if (source_stat.st_size == target_stat.st_size and
+                                source_stat.st_mtime <= target_stat.st_mtime):
+                            skipped_count += 1
+                            file_index += 1
+                            continue
+
+                        # 如果文件不同，添加序号
+                        base_name = target_path.stem
+                        suffix = target_path.suffix
+                        counter = 1
+
+                        while target_path.exists():
+                            new_name = f"{base_name}_{counter}{suffix}"
+                            target_path = target_dir / new_name
+                            counter += 1
+
+                    # 复制文件
+                    try:
+                        if copy_file_safe(source_path, target_path):
+                            copied_count += 1
+                        else:
+                            error_count += 1
+                    except Exception as e:
+                        print(f"复制失败 {filename}: {e}")
+                        error_count += 1
+
+                    file_index += 1
+
+                if progress.wasCanceled():
+                    break
+
+        finally:
+            progress.close()
+
+        # 显示结果
+        result_lines = [f"✅ 成功复制: {copied_count} 个最新版本文件"]
+
+        if skipped_count > 0:
+            result_lines.append(f"⏭️ 跳过相同文件: {skipped_count} 个")
+
+        if error_count > 0:
+            result_lines.append(f"❌ 复制失败: {error_count} 个")
+
+        result_lines.append(f"\n目标文件夹: 09_edit/footage/")
+        result_lines.append("（只复制了每个Cut的最新版本）")
+
+        QMessageBox.information(
+            self, "复制完成",
+            "\n".join(result_lines)
+        )
+
+        # 询问是否打开文件夹
+        open_folder = QMessageBox.question(
+            self, "打开文件夹",
+            "是否打开 footage 文件夹查看？",
+            QMessageBox.Yes | QMessageBox.No
+        )
+
+        if open_folder == QMessageBox.Yes:
+            open_in_file_manager(footage_dir)
 
     # ========================== 素材导入 ========================== #
 
@@ -2109,9 +2349,9 @@ class CXProjectManager(QMainWindow):
             self.btn_new_project.setToolTip("点击后选择创建位置")
             self.statusbar.showMessage("未设置默认项目路径，新建项目时需要选择位置")
 
-        last_project = self.app_settings.value("last_project")
-        if last_project and Path(last_project).exists():
-            self._load_project(last_project)
+        # last_project = self.app_settings.value("last_project")
+        # if last_project and Path(last_project).exists():
+        #     self._load_project(last_project)
 
     def _save_app_settings(self):
         """保存软件设置"""
