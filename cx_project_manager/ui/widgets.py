@@ -125,7 +125,7 @@ class DetailedFileListWidget(QListWidget):
 
     def _load_icons(self):
         """加载图标"""
-        icon_base = Path("../../_imgs")
+        icon_base = Path("cx_project_manager/ui/_icons")
         icon_types = [
             'aep', 'psd', 'folder', 'image', 'video', 'file', 'clip',
             'maya', '3dsmax', 'blender', 'c4d', 'fbx', 'pld', '3d',

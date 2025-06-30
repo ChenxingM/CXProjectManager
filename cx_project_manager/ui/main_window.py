@@ -10,7 +10,7 @@ import subprocess
 from datetime import datetime
 from functools import partial
 from pathlib import Path
-from typing import Dict, Optional
+from typing import Dict, Optional, cast
 
 from PySide6.QtCore import Qt, QSettings, Signal
 from PySide6.QtGui import QAction, QBrush, QColor, QFont
@@ -2107,21 +2107,25 @@ class CXProjectManager(QMainWindow):
             QMessageBox.information(self, "成功", f"默认项目路径已设置为:\n{folder}")
 
     def _update_recent_menu(self):
-        """更新最近项目菜单"""
+        """刷新『最近项目』菜单"""
         self.recent_menu.clear()
 
-        recent_projects = self.app_settings.value("recent_projects", [])
-        if not recent_projects:
+        # 取出最近项目并过滤掉已失效的路径
+        recent_paths = cast(list[str], self.app_settings.value("recent_projects", []))
+        recent_list = [p for p in recent_paths if Path(p).exists()]
+
+        if not recent_list:
             action = self.recent_menu.addAction("(无最近项目)")
             action.setEnabled(False)
             return
 
-        for path in recent_projects[:10]:
-            if Path(path).exists():
-                action = self.recent_menu.addAction(Path(path).name)
-                action.setShortcut("Ctrl+R")
-                action.setToolTip(path)
-                action.triggered.connect(lambda checked, p=path: self.open_recent_project(p))
+        for idx, path in enumerate(recent_list[:10]):
+            act = QAction(Path(path).name, self)
+            if idx == 0:  # 只有第 1 个加快捷键
+                act.setShortcut("Ctrl+R")
+            act.setToolTip(path)
+            act.triggered.connect(lambda _=False, p=path: self.open_recent_project(p))
+            self.recent_menu.addAction(act)
 
     def open_recent_project(self, path: str):
         """打开最近项目"""

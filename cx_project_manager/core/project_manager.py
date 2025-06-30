@@ -97,6 +97,10 @@ class ProjectManager:
             "08_tools/ae_scripts",
             "08_tools/python",
             "08_tools/config",
+            "09_edit",
+            "09_edit/projects",
+            "09_edit/output",
+            "09_edit/footage",
             "98_tmp",
             "99_other",
         ]

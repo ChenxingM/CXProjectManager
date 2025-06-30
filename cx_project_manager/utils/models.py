@@ -41,6 +41,7 @@ class ProjectPaths:
     assets: str = "07_master_assets"
     aep_templates: str = "07_master_assets/aep_templates"
     tools: str = "08_tools"
+    edit: str = "09_edit"
     vfx: str = "01_vfx"
     cg: str = "02_3dcg"
     tmp: str = "98_tmp"
