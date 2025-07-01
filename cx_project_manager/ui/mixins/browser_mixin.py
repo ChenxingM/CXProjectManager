@@ -90,7 +90,7 @@ class BrowserMixin:
                 ep_info = f" ({cut.episode_id})" if cut.episode_id else ""
                 stats_lines.append(f"  {cut.get_display_name()}{ep_info}")
 
-        self.txt_project_stats.setText("\n".join(stats_lines))
+        # self.txt_project_stats.setText("\n".join(stats_lines))
 
     def _update_browser_tree(self):
         """更新浏览器的Episode/Cut树"""

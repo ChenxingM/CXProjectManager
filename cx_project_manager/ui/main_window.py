@@ -36,14 +36,20 @@ from cx_project_manager.ui.mixins import (
 # 项目结构中文注释映射
 PROJECT_STRUCTURE_NAMES = {
     "00_reference_project": "00_项目参考",
+    "00_reference": "00_参考",
     "art_design": "美术",
     "character_design": "角色设定",
     "concept_art": "氛围图",
     "docs": "文档",
     "other_design": "其他设计",
     "storyboard": "分镜",
+    "director_notes": "导演笔记",
+    "script": "脚本",
     "01_vfx": "01_摄影",
     "02_3dcg": "02_3DCG",
+    "03_preview": "03_预览",
+    "04_log": "04_日志",
+    "05_output_mixdown": "05_输出混音",
     "05_stills": "05_缩略图",
     "06_render": "06_渲染输出",
     "07_master_assets": "07_主资产",
@@ -61,6 +67,7 @@ PROJECT_STRUCTURE_NAMES = {
     "mp4": "MP4视频",
     "footage": "素材片段",
     "project_config.json": "项目配置文件",
+    "README.md": "项目文档",
     "project": "剪辑工程",
     "output": "剪辑输出",
     "fonts": "字体资源",
@@ -470,7 +477,7 @@ class CXProjectManager(QMainWindow, ProjectMixin, EpisodeCutMixin,
         self.txt_project_stats.setMaximumHeight(200)
         stats_layout.addWidget(self.txt_project_stats)
 
-        layout.addWidget(stats_group)
+        # layout.addWidget(stats_group)
 
         # Cut树
         tree_group = QGroupBox("📂 Cut")
