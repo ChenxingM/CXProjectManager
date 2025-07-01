@@ -89,6 +89,7 @@ class ProjectManager:
             "00_reference_project/storyboard",
             "00_reference_project/docs",
             "00_reference_project/other_design",
+            "05_stills",
             "06_render",
             "07_master_assets/fonts",
             "07_master_assets/logo",
@@ -119,6 +120,7 @@ class ProjectManager:
 - `00_reference_project/` - 全项目通用参考资料
 - `01_vfx/` - VFX/AE 制作文件
 - `02_3dcg/` - 3DCG 制作文件（按需创建）
+- `05_stills/` - 预览静帧
 - `06_render/` - 最终渲染输出
 - `07_master_assets/` - 共用素材
 - `08_tools/` - 自动化脚本与工具
@@ -157,7 +159,8 @@ class ProjectManager:
             "01_vfx/timesheets",
             "03_preview",
             "04_log",
-            "05_output_mixdown",
+            "05_stills",
+            "06_output_mixdown",
         ]
 
         for dir_path in dirs:
