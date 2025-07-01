@@ -44,7 +44,7 @@ def main():
     app.setOrganizationName("CXStudio")
 
     # 设置应用图标
-    icon_path = Path("../_imgs/app_icon.png")
+    icon_path = Path("_imgs/app_icon.png")
     if icon_path.exists():
         app.setWindowIcon(QIcon(str(icon_path)))
 
