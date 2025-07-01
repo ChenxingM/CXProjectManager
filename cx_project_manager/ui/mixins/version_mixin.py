@@ -125,6 +125,14 @@ class VersionMixin:
 
     def _delete_file(self, file_info: FileInfo, file_type: str):
         """删除文件"""
+        # 检查是否有锁定
+        if file_info.is_locked:
+            QMessageBox.warning(
+                self, "错误",
+                f"无法删除已锁定的文件: {file_info.name}\n请先解锁此版本"
+            )
+            return
+
         # 获取实际文件名（去掉锁定图标）
         actual_name = file_info.name.replace("🔒 ", "") if file_info.name.startswith("🔒 ") else file_info.name
 
@@ -559,46 +567,12 @@ class VersionMixin:
             QMessageBox.warning(self, "错误", "请先打开或创建项目")
             return
 
-        stats = self._get_version_statistics()
+        version_stats = self._get_version_statistics()
 
-        msg = f"""项目版本统计
-================
+        from cx_project_manager.ui.mixins.version_statistics_dialog import ProjectStatisticsDialog
 
-📊 文件统计:
-  • 总文件数: {stats['total_files']}
-  • 有版本号的文件: {stats['versioned_files']}
-  • 最新版本: {stats['latest_versions']}
-  • 旧版本: {stats['old_versions']}
-
-🔒 锁定状态:
-  • 锁定文件: {stats['locked_files']}
-  • 锁定的最新版本: {stats['locked_latest']}
-  • 锁定的旧版本: {stats['locked_old']}
-
-💾 存储空间:
-  • 总大小: {stats['total_size_mb']:.1f} MB
-  • 最新版本占用: {stats['latest_size_mb']:.1f} MB
-  • 旧版本占用: {stats['old_size_mb']:.1f} MB
-  • 可删除空间: {stats['deletable_size_mb']:.1f} MB
-
-📁 文件类型分布:
-  • AEP文件: {stats['aep_count']}
-  • BG文件: {stats['bg_count']}
-  • Cell文件夹: {stats['cell_count']}"""
-
-        dialog = QMessageBox(self)
-        dialog.setWindowTitle("版本统计")
-        dialog.setText(msg)
-        dialog.setTextFormat(Qt.PlainText)
-        dialog.setStyleSheet("""
-            QMessageBox {
-                min-width: 500px;
-            }
-            QLabel {
-                font-family: Consolas, Monaco, monospace;
-                font-size: 12px;
-            }
-        """)
+        # 显示综合统计对话框
+        dialog = ProjectStatisticsDialog(self.project_config, version_stats, self)
         dialog.exec_()
 
     def _get_version_statistics(self) -> Dict[str, int]:

@@ -127,12 +127,12 @@ class MenuMixin(MixinBase):
         operations_menu = menubar.addMenu("操作")
 
         version_actions = [
-            ("🔒 锁定项目所有最新版本", self.lock_all_latest_versions),
-            ("🔓 解锁项目所有版本", self.unlock_all_versions),
+            ("🔒 锁定项目所有最新版本", None, self.lock_all_latest_versions),
+            ("🔓 解锁项目所有版本", None, self.unlock_all_versions),
             None,
-            ("❌ 删除项目所有旧版本", self.delete_all_old_versions),
+            ("❌ 删除项目所有旧版本", None, self.delete_all_old_versions),
             None,
-            ("📊 版本统计", self.show_version_statistics)
+            ("📊 版本统计", "Ctrl+T", self.show_version_statistics)
         ]
 
         for action_data in version_actions:
@@ -140,7 +140,9 @@ class MenuMixin(MixinBase):
                 operations_menu.addSeparator()
             else:
                 action = QAction(action_data[0], self)  # type: ignore
-                action.triggered.connect(action_data[1])
+                if action_data[1]:
+                    action.setShortcut(action_data[1])
+                action.triggered.connect(action_data[2])
                 operations_menu.addAction(action)
 
         # 帮助菜單
