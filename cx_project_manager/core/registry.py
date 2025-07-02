@@ -57,6 +57,9 @@ class ProjectRegistry:
             data = {name: info.to_dict() for name, info in self.projects.items()}
             with open(self.registry_path, "w", encoding="utf-8") as f:
                 json.dump(data, f, indent=4, ensure_ascii=False)
+
+            from cx_project_manager.utils.convert_registry_to_csv import convert_registry_to_csv
+            convert_registry_to_csv()
         except Exception as e:
             print(f"保存项目注册信息失败: {e}")
 

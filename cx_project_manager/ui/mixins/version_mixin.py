@@ -333,14 +333,14 @@ class VersionMixin:
             QMessageBox.warning(self, "错误", "请先打开或创建项目")
             return
 
-        reply = QMessageBox.question(
-            self, "确认",
-            "将锁定项目中所有文件的最新版本。\n锁定后这些版本将不会被自动删除。\n\n是否继续？",
-            QMessageBox.Yes | QMessageBox.No
-        )
-
-        if reply != QMessageBox.Yes:
-            return
+        # reply = QMessageBox.question(
+        #     self, "确认",
+        #     "将锁定项目中所有文件的最新版本。\n锁定后这些版本将不会被自动删除。\n\n是否继续？",
+        #     QMessageBox.Yes | QMessageBox.No
+        # )
+        #
+        # if reply != QMessageBox.Yes:
+        #     return
 
         locked_count = 0
         error_count = 0
@@ -420,6 +420,51 @@ class VersionMixin:
                         except:
                             error_count += 1
 
+        # 处理06_render目录
+        for render_dir in self.project_base.rglob("06_render"):
+            # 定义需要处理的文件扩展名
+            render_extensions = ['.mov', '.mp4', '.png']
+
+            # 遍历所有子目录
+            for subdir in render_dir.rglob("*"):
+                if subdir.is_dir():
+                    # 收集该目录下的所有渲染文件
+                    render_files = []
+                    for ext in render_extensions:
+                        render_files.extend(subdir.glob(f"*{ext}"))
+
+                    # 按基础名称分组
+                    files_by_base = {}
+                    for file in render_files:
+                        file_info = get_file_info(file)
+                        if file_info.version is not None:
+                            # 获取基础名称
+                            if '_T' in file.stem:
+                                base_name = file.stem[:file.stem.rfind('_T')]
+                            elif '_v' in file.stem:
+                                base_name = file.stem[:file.stem.rfind('_v')]
+                            else:
+                                continue
+
+                            # 创建分组key（包含扩展名以区分不同类型的文件）
+                            group_key = f"{base_name}{file.suffix}"
+
+                            if group_key not in files_by_base:
+                                files_by_base[group_key] = []
+                            files_by_base[group_key].append(file_info)
+
+                    # 锁定每组的最新版本
+                    for group_key, files in files_by_base.items():
+                        if files:
+                            latest = max(files, key=lambda f: f.version)
+                            lock_file = latest.path.parent / f".{latest.path.name}.lock"
+                            try:
+                                if not lock_file.exists():
+                                    lock_file.touch()
+                                    locked_count += 1
+                            except:
+                                error_count += 1
+
         # 显示结果
         msg = f"锁定完成:\n✅ 成功锁定: {locked_count} 个最新版本"
         if error_count > 0:
@@ -437,14 +482,14 @@ class VersionMixin:
             QMessageBox.warning(self, "错误", "请先打开或创建项目")
             return
 
-        reply = QMessageBox.question(
-            self, "确认",
-            "将解锁项目中所有已锁定的版本。\n解锁后这些版本可以被删除。\n\n是否继续？",
-            QMessageBox.Yes | QMessageBox.No
-        )
-
-        if reply != QMessageBox.Yes:
-            return
+        # reply = QMessageBox.question(
+        #     self, "确认",
+        #     "将解锁项目中所有已锁定的版本。\n解锁后这些版本可以被删除。\n\n是否继续？",
+        #     QMessageBox.Yes | QMessageBox.No
+        # )
+        #
+        # if reply != QMessageBox.Yes:
+        #     return
 
         unlocked_count = 0
 
