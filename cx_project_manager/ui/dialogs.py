@@ -168,6 +168,8 @@ class ProjectBrowserDialog(QDialog):
 
             if reply == QMessageBox.Yes:
                 self.registry.unregister_project(project_name)
+                from cx_project_manager.utils.convert_registry_to_csv import convert_registry_to_csv
+                convert_registry_to_csv()
                 self._load_projects()
 
 
