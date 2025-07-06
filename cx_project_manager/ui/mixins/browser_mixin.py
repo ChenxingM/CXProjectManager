@@ -409,7 +409,7 @@ class BrowserMixin:
             list_widget.addItem(item)
 
     def _load_render_files(self, render_path: Path):
-        """加载渲染文件"""
+        """加载渲染文件（支持缩略图）"""
         list_widget = self.file_lists["render"]
 
         if not render_path.exists():
@@ -427,10 +427,34 @@ class BrowserMixin:
         render_items = []
         has_any_render = False
 
+        # 获取当前cut编号
+        cut_id = self.current_cut_id
+        if not cut_id:
+            return
+
+        # 查找对应的缩略图
+        thumbnail_path = None
+        stills_base = self.project_base / "05_stills"
+
+        # 如果有episode，缩略图在 05_stills/episode/ 下
+        if self.current_episode_id:
+            stills_base = stills_base / self.current_episode_id
+
+        # 查找第一帧缩略图 (格式: 001+still_F0001.jpg)
+        if stills_base.exists():
+            # 查找所有匹配的缩略图文件
+            still_pattern = f"{cut_id}+still_F*.jpg"
+            still_files = list(stills_base.glob(still_pattern))
+            if still_files:
+                # 使用第一张图片作为缩略图
+                thumbnail_path = sorted(still_files)[0]
+
         # PNG序列
         png_path = render_path / "png_seq"
         if png_path.exists() and any(png_path.glob("*.png")):
-            render_items.append(get_png_seq_info(png_path))
+            png_info = get_png_seq_info(png_path)
+            png_info.thumbnail_path = thumbnail_path  # 设置缩略图
+            render_items.append(png_info)
             has_any_render = True
 
         # ProRes视频
@@ -438,6 +462,7 @@ class BrowserMixin:
         if prores_path.exists():
             for file in prores_path.glob("*.mov"):
                 file_info = get_file_info(file)
+                file_info.thumbnail_path = thumbnail_path  # 设置缩略图
                 # 检查是否有锁定文件
                 lock_file = file.parent / f".{file.name}.lock"
                 if lock_file.exists():
@@ -451,6 +476,7 @@ class BrowserMixin:
         if mp4_path.exists():
             for file in mp4_path.glob("*.mp4"):
                 file_info = get_file_info(file)
+                file_info.thumbnail_path = thumbnail_path  # 设置缩略图
                 # 检查是否有锁定文件
                 lock_file = file.parent / f".{file.name}.lock"
                 if lock_file.exists():

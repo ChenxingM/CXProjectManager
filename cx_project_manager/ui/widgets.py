@@ -176,9 +176,25 @@ class DetailedFileListWidget(QListWidget):
             self.add_file_item(file_info)
 
     def _get_file_icon(self, file_info: FileInfo) -> Optional[QIcon]:
-        """获取文件图标"""
+        """获取文件图标（支持自定义缩略图）"""
         if file_info.is_no_render:
             return self.icons.get('no_render')
+
+        # 优先使用自定义缩略图
+        if hasattr(file_info, 'thumbnail_path') and file_info.thumbnail_path:
+            try:
+                pixmap = QPixmap(str(file_info.thumbnail_path))
+                if not pixmap.isNull():
+                    # 缩放到合适的尺寸，保持纵横比
+                    scaled_pixmap = pixmap.scaled(
+                        64, 64,
+                        Qt.KeepAspectRatio,
+                        Qt.SmoothTransformation
+                    )
+                    return QIcon(scaled_pixmap)
+            except Exception as e:
+                print(f"加载缩略图失败: {e}")
+                # 如果加载失败，继续使用默认图标
 
         if file_info.is_folder:
             if file_info.is_png_seq and file_info.first_png:
@@ -224,6 +240,7 @@ class DetailedFileListWidget(QListWidget):
             return self.icons.get('image')
 
         if ext in VIDEO_EXTENSIONS:
+            # 对于视频文件，如果有缩略图，已经在上面处理了
             return self.icons.get('video')
 
         return self.icons.get('file')

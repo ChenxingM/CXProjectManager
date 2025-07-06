@@ -91,18 +91,20 @@ class ReuseCut:
 
 @dataclass
 class FileInfo:
-    """文件信息"""
+    """文件信息数据类"""
     path: Path
     name: str
     version: Optional[int] = None
     modified_time: datetime = field(default_factory=datetime.now)
     size: int = 0
     is_folder: bool = False
-    is_aep: bool = False
     is_png_seq: bool = False
     first_png: Optional[Path] = None
+    is_aep: bool = False
     is_no_render: bool = False
+    is_locked: bool = False
     is_reuse_cut: bool = False
+    thumbnail_path: Optional[Path] = None  # 添加缩略图路径属性
 
     @property
     def version_str(self) -> str:
