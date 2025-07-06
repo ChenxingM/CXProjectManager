@@ -37,6 +37,7 @@ class ProjectInfo:
 class ProjectPaths:
     """项目路径配置"""
     reference: str = "00_reference_project"
+    stills: str = "05_stills"
     render: str = "06_render"
     assets: str = "07_master_assets"
     aep_templates: str = "07_master_assets/aep_templates"

@@ -14,7 +14,7 @@ from PySide6.QtWidgets import (
 )
 
 from cx_project_manager.utils.constants import IMAGE_EXTENSIONS, VIDEO_EXTENSIONS, THREED_EXTENSIONS
-from cx_project_manager.utils.models import FileInfo
+from cx_project_manager.utils.models import FileInfo, ProjectPaths, ProjectInfo
 from cx_project_manager.utils.utils import get_file_info, format_file_size
 
 
