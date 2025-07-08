@@ -73,8 +73,8 @@ class ProjectMixin:
                 episodes = self.project_config.get("episodes", {})
                 self.project_config["episode_count"] = len(episodes)
                 self.project_config["episode_list"] = sorted(episodes.keys())
-                from cx_project_manager.utils.convert_registry_to_csv import convert_registry_to_csv
-                convert_registry_to_csv()
+                from ...utils.convert_registry_to_csv import convert_registry_to_csv
+                convert_registry_to_csv(self.project_base)
 
             self.project_changed.emit()
             self._add_to_recent(str(self.project_base))

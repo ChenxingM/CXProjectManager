@@ -10,9 +10,9 @@ from typing import Dict, List
 
 from PySide6.QtCore import QSettings
 
-from cx_project_manager.utils.constants import PROJECT_REGISTRY_FILE, PROJECT_SETTINGS_DIR
-from cx_project_manager.utils.models import ProjectInfo
-from cx_project_manager.utils.utils import ensure_dir
+from ..utils.constants import PROJECT_REGISTRY_FILE, PROJECT_SETTINGS_DIR
+from ..utils.models import ProjectInfo
+from ..utils.utils import ensure_dir
 
 
 class ProjectRegistry:
@@ -58,8 +58,8 @@ class ProjectRegistry:
             with open(self.registry_path, "w", encoding="utf-8") as f:
                 json.dump(data, f, indent=4, ensure_ascii=False)
 
-            from cx_project_manager.utils.convert_registry_to_csv import convert_registry_to_csv
-            convert_registry_to_csv()
+            from ..utils.convert_registry_to_csv import convert_registry_to_csv
+            convert_registry_to_csv(self.registry_path.parent)
         except Exception as e:
             print(f"保存项目注册信息失败: {e}")
 

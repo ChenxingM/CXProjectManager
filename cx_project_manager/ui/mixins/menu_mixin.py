@@ -12,7 +12,7 @@ from cx_project_manager.utils.version_info import version_info
 from cx_project_manager.utils.utils import open_in_file_manager
 
 if TYPE_CHECKING:
-    from cx_project_manager.ui.mixins.base import MixinBase
+    from ...ui.mixins.base import MixinBase
 else:
     MixinBase = object
 

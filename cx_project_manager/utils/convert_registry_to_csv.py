@@ -8,14 +8,15 @@ import json
 import csv
 import os
 from pathlib import Path
+from typing import Optional, cast
 
 
-def convert_registry_to_csv():
+def convert_registry_to_csv(project_base: Optional[Path] = None) -> bool:
     """将JSON注册表转换为CSV格式"""
 
     # 路径配置
-    json_path = Path("E:/3_Projects/_proj_settings/project_registry.json")
-    csv_path = Path("E:/3_Projects/_proj_settings/project_registry.csv")
+    json_path = Path(project_base) / 'project_registry.json'
+    csv_path = Path(project_base) / 'project_registry.csv'
 
     # 读取JSON
     try:

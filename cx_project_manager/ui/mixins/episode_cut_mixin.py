@@ -7,8 +7,8 @@ from typing import Optional
 from PySide6.QtWidgets import QMessageBox, QInputDialog, QDialog
 from PySide6.QtCore import Qt
 
-from cx_project_manager.utils.models import ReuseCut
-from cx_project_manager.ui.dialogs import ReuseCutDialog
+from ...utils.models import ReuseCut
+from ...ui.dialogs import ReuseCutDialog
 
 
 class EpisodeCutMixin:

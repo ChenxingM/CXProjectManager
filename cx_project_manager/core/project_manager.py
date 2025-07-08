@@ -10,8 +10,8 @@ from pathlib import Path
 from typing import List, Optional, Tuple
 import re
 
-from cx_project_manager.utils.models import ProjectPaths, ReuseCut
-from cx_project_manager.utils.utils import (
+from ..utils.models import ProjectPaths, ReuseCut
+from ..utils.utils import (
     ensure_dir, copy_file_safe, zero_pad, parse_cut_id, format_cut_id,
     extract_version_from_filename
 )
