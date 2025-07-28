@@ -126,6 +126,20 @@ from ui.dialogs import ProjectBrowserDialog
 # dialog = ProjectBrowserDialog(registry, parent)
 ```
 
+### 注册表 CSV 导出
+
+`utils/convert_registry_to_csv.py` 提供 `watch_and_convert()` 函数，可以在
+`project_registry.json` 更新时自动生成 `project_registry.csv`。调用时可选地
+传入 `base_path` 参数指定注册表目录，默认为脚本所在目录。
+
+```python
+from pathlib import Path
+from cx_project_manager.utils.convert_registry_to_csv import watch_and_convert
+
+# 自定义注册表路径
+watch_and_convert(Path("E:/3_Projects/_proj_settings"))
+```
+
 ## ⚠️ 注意事项
 
 1. **保持依赖**: `_utils/` 文件夹中的文件保持原样，确保样式和版本信息正常工作

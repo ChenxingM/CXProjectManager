@@ -51,10 +51,20 @@ def convert_registry_to_csv(project_base: Optional[Path] = None) -> bool:
         return False
 
 
-def watch_and_convert():
-    """监视JSON文件变化并自动转换"""
-    json_path = Path("E:/3_Projects/_proj_settings/project_registry.json")
-    csv_path = Path("E:/3_Projects/_proj_settings/project_registry.csv")
+def watch_and_convert(base_path: Optional[Path] = None):
+    """监视JSON文件变化并自动转换
+
+    Parameters
+    ----------
+    base_path : Path, optional
+        项目注册表所在目录，默认为当前脚本所在目录。
+    """
+
+    if base_path is None:
+        base_path = Path(__file__).resolve().parent
+
+    json_path = Path(base_path) / "project_registry.json"
+    csv_path = Path(base_path) / "project_registry.csv"
 
     # 获取JSON文件的修改时间
     if not json_path.exists():
@@ -71,7 +81,7 @@ def watch_and_convert():
             return
 
     # 执行转换
-    convert_registry_to_csv()
+    convert_registry_to_csv(base_path)
 
 
 if __name__ == "__main__":
