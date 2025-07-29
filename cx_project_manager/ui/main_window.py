@@ -68,7 +68,7 @@ PROJECT_STRUCTURE_NAMES = {
     "footage": "素材片段",
     "project_config.json": "项目配置文件",
     "README.md": "项目文档",
-    "project": "剪辑工程",
+    "projects": "剪辑工程",
     "output": "剪辑输出",
     "fonts": "字体资源",
     "fx_presets": "特效预设",
