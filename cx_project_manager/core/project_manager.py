@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """
-项目管理核心类模块 - 完整版本
+项目管理核心类模块 - 完整版本（带注册表同步）
 """
 
 import json
@@ -24,15 +24,108 @@ class ProjectManager:
         self.project_base = project_base
         self.project_config = None
         self.paths = ProjectPaths()
+        # 注册表路径（可以通过配置设置）
+        self.registry_path = None
 
-    def create_project(self, project_name: str, project_display_name: str, base_folder: Path, no_episode: bool = False) -> bool:
-        """创建新项目"""
+    def set_registry_path(self, registry_path: Path):
+        """设置注册表路径"""
+        self.registry_path = registry_path
+
+    def _get_registry_path(self) -> Path:
+        """获取注册表路径"""
+        if self.registry_path:
+            return self.registry_path
+
+        # 默认路径：项目基础文件夹的父目录下的 _proj_settings
+        if self.project_base:
+            parent = self.project_base.parent
+            return parent / "_proj_settings" / "project_registry.json"
+
+        # 如果没有项目基础路径，使用默认路径
+        return Path("E:/3_Projects/_proj_settings/project_registry.json")
+
+    def _update_registry(self):
+        """更新项目注册表"""
+        if not self.project_config or not self.project_base:
+            return
+
+        registry_path = self._get_registry_path()
+
+        # 确保注册表目录存在
+        registry_path.parent.mkdir(parents=True, exist_ok=True)
+
+        # 读取现有注册表
+        registry_data = {}
+        if registry_path.exists():
+            try:
+                with open(registry_path, "r", encoding="utf-8") as f:
+                    registry_data = json.load(f)
+            except Exception as e:
+                print(f"读取注册表失败: {e}")
+                registry_data = {}
+
+        # 获取项目名称
+        project_name = self.project_config.get("project_name")
+        if not project_name:
+            return
+
+        # 更新或创建项目条目
+        if project_name not in registry_data:
+            # 新项目
+            registry_data[project_name] = {
+                "project_name": project_name,
+                "project_display_name": self.project_config.get("project_display_name", project_name),
+                "project_path": str(self.project_base),
+                "config_path": str(self.project_base / "project_config.json"),
+                "created_time": self.project_config.get("created_time", datetime.now().isoformat()),
+                "episode_count": len(self.project_config.get("episodes", {})),
+                "episode_list": sorted(self.project_config.get("episodes", {}).keys()),
+                "no_episode": self.project_config.get("no_episode", False),
+                "last_accessed": datetime.now().isoformat()
+            }
+        else:
+            # 更新现有项目
+            registry_data[project_name].update({
+                "project_display_name": self.project_config.get("project_display_name", project_name),
+                "episode_count": len(self.project_config.get("episodes", {})),
+                "episode_list": sorted(self.project_config.get("episodes", {}).keys()),
+                "no_episode": self.project_config.get("no_episode", False),
+                "last_accessed": datetime.now().isoformat()
+            })
+
+        # 保存注册表
+        try:
+            with open(registry_path, "w", encoding="utf-8") as f:
+                json.dump(registry_data, f, indent=4, ensure_ascii=False)
+        except Exception as e:
+            print(f"保存注册表失败: {e}")
+
+    def create_project(
+            self,
+            project_name: str,  # 实际的项目名称（用于文件系统路径，可能包含前缀）
+            project_display_name: str,  # 显示名称（用于UI显示，不含前缀）
+            base_folder: Path,
+            no_episode: bool = False
+    ) -> bool:
+        """
+        创建新项目
+
+        参数:
+            project_name: 实际的项目名称，用于创建文件夹路径（如 "24_09_SSSK_PV"）
+            project_display_name: 显示名称，用于UI显示（如 "SSSK_PV"）
+            base_folder: 项目的基础文件夹
+            no_episode: 是否为无Episode模式
+
+        返回:
+            bool: 创建是否成功
+        """
+        # 使用 project_name 创建实际的文件夹路径
         self.project_base = base_folder / project_name
         self._create_project_structure(no_episode)
 
         self.project_config = {
-            "project_name": project_name,
-            "project_display_name": project_display_name,
+            "project_name": project_name,  # 实际项目名（文件系统用）
+            "project_display_name": project_display_name,  # 显示名称（UI用）
             "project_path": str(self.project_base),
             "no_episode": no_episode,
             "episodes": {},
