@@ -196,15 +196,24 @@ class ProjectManager:
             return False
 
     def save_config(self):
-        """保存项目配置"""
+        """保存项目配置并更新注册表"""
         if not self.project_base or not self.project_config:
             return
 
+        # 更新修改时间
         self.project_config["last_modified"] = datetime.now().isoformat()
-        config_file = self.project_base / "project_config.json"
 
-        with open(config_file, "w", encoding="utf-8") as f:
-            json.dump(self.project_config, f, indent=4, ensure_ascii=False)
+        # 保存项目配置
+        config_file = self.project_base / "project_config.json"
+        try:
+            with open(config_file, "w", encoding="utf-8") as f:
+                json.dump(self.project_config, f, indent=4, ensure_ascii=False)
+        except Exception as e:
+            print(f"保存项目配置失败: {e}")
+            return
+
+        # 同步更新注册表
+        self._update_registry()
 
     def _create_project_structure(self, no_episode: bool):
         """创建项目目录结构"""
@@ -270,7 +279,7 @@ class ProjectManager:
         if "episodes" not in self.project_config:
             self.project_config["episodes"] = {}
         self.project_config["episodes"][ep_id] = []
-        self.save_config()
+        self.save_config()  # 这会同时更新注册表
 
         return True, ep_id
 
@@ -306,7 +315,7 @@ class ProjectManager:
             self._create_cut_structure(cut_path, episode_id=episode_id)
             self.project_config["episodes"][episode_id].append(cut_id)
 
-        self.save_config()
+        self.save_config()  # 这会同时更新注册表
         return True, cut_id
 
     def _create_cut_structure(self, cut_path: Path, episode_id: Optional[str] = None):
@@ -402,7 +411,7 @@ class ProjectManager:
             self.project_config["reuse_cuts"] = []
 
         self.project_config["reuse_cuts"].append(reuse_cut.to_dict())
-        self.save_config()
+        self.save_config()  # 这会同时更新注册表
 
         return True, f"成功创建兼用卡: {cuts_str}"
 
