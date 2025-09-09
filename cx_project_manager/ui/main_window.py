@@ -436,10 +436,10 @@ class CXProjectManager(QMainWindow, ProjectMixin, EpisodeCutMixin,
         action_layout = QHBoxLayout()
 
         buttons = [
-            ("导入选中", self.import_single),
+            # ("导入选中", self.import_single),
             ("批量导入", self.import_all),
-            ("复制 AEP 模板", self.copy_aep_template),
-            ("批量复制 AEP", self.batch_copy_aep_template)
+            # ("复制 AEP 模板", self.copy_aep_template),
+            ("复制 AEP 模版", self.batch_copy_aep_template)
         ]
 
         for text, handler in buttons:
