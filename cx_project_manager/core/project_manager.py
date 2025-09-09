@@ -25,13 +25,14 @@ class ProjectManager:
         self.project_config = None
         self.paths = ProjectPaths()
 
-    def create_project(self, project_name: str, base_folder: Path, no_episode: bool = False) -> bool:
+    def create_project(self, project_name: str, project_display_name: str, base_folder: Path, no_episode: bool = False) -> bool:
         """创建新项目"""
         self.project_base = base_folder / project_name
         self._create_project_structure(no_episode)
 
         self.project_config = {
             "project_name": project_name,
+            "project_display_name": project_display_name,
             "project_path": str(self.project_base),
             "no_episode": no_episode,
             "episodes": {},

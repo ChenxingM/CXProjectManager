@@ -32,12 +32,13 @@ def convert_registry_to_csv(project_base: Optional[Path] = None) -> bool:
             writer = csv.writer(f)
 
             # 写入表头
-            writer.writerow(['project_name', 'project_path', 'no_episode', 'last_accessed'])
+            writer.writerow(['project_name', 'project_display_name', 'project_path', 'no_episode', 'last_accessed'])
 
             # 写入数据
             for project_name, project_info in data.items():
                 writer.writerow([
                     project_name,
+                    project_info.get('project_display_name', ''),
                     project_info.get('project_path', ''),
                     'true' if project_info.get('no_episode', False) else 'false',
                     project_info.get('last_accessed', '')

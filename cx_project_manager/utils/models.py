@@ -15,6 +15,7 @@ from .constants import CUT_PATTERN
 class ProjectInfo:
     """项目注册信息"""
     project_name: str
+    project_display_name: str
     project_path: str
     config_path: str
     created_time: str

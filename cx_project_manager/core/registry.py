@@ -66,6 +66,7 @@ class ProjectRegistry:
     def register_project(self, project_config: Dict, project_path: Path):
         """注册项目"""
         project_name = project_config.get("project_name", "Unknown")
+        project_display_name = project_config.get("project_display_name", "Unknown")
 
         # 计算Episode信息
         episodes = project_config.get("episodes", {})
@@ -74,6 +75,7 @@ class ProjectRegistry:
 
         info = ProjectInfo(
             project_name=project_name,
+            project_display_name=project_display_name,
             project_path=str(project_path),
             config_path=str(project_path / "project_config.json"),
             created_time=project_config.get("created_time", datetime.now().isoformat()),
