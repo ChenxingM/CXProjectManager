@@ -186,9 +186,13 @@ class ProjectManager:
 
             # 兼容性处理
             if "reuse_cuts" not in self.project_config:
-                self.project_config["reuse_cuts"] = self.project_config.get("reuse_cards", [])
-                if "reuse_cards" in self.project_config:
-                    del self.project_config["reuse_cards"]
+                self.project_config["reuse_cuts"] = self.project_config.get("reuse_cuts", [])
+                if "reuse_cuts" in self.project_config:
+                    del self.project_config["reuse_cuts"]
+
+            # 确保有 display_name（兼容旧项目）
+            if "project_display_name" not in self.project_config:
+                self.project_config["project_display_name"] = self.project_config.get("project_name", "")
 
             return True
         except Exception as e:
