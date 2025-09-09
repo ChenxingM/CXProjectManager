@@ -47,6 +47,38 @@ class ProjectManager:
         self._create_readme()
         return True
 
+    def _create_readme(self):
+        """创建项目说明文件"""
+        readme_path = self.project_base / "README.md"
+        config = self.project_config
+
+        readme_content = f"""# {config['project_display_name']}
+
+## 项目信息
+- **项目名称**: {config['project_display_name']}
+- **项目路径名**: {config['project_name']}
+- **创建时间**: {config['created_time']}
+- **Episode模式**: {'无Episode模式' if config['no_episode'] else '有Episode模式'}
+
+## 目录结构
+```
+{config['project_name']}/
+├── 00_resource/      # 资源文件
+├── 01_vfx/          # VFX文件
+├── 02_comp/         # 合成文件
+├── 03_render/       # 渲染输出
+└── project_config.json
+```
+
+## 使用说明
+1. 所有AEP文件存放在 01_vfx/ 对应的Cut文件夹中
+2. 渲染输出保存到 03_render/ 对应的Cut文件夹中
+3. 资源文件统一管理在 00_resource/ 目录下
+"""
+
+        with open(readme_path, 'w', encoding='utf-8') as f:
+            f.write(readme_content)
+
     def load_project(self, project_path: Path) -> bool:
         """加载项目"""
         config_file = project_path / "project_config.json"
@@ -109,33 +141,6 @@ class ProjectManager:
 
         for dir_path in dirs:
             ensure_dir(self.project_base / dir_path)
-
-    def _create_readme(self):
-        """创建项目README文件"""
-        readme_content = f"""# {self.project_base.name}
-
-创建时间：{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}
-
-## 项目结构说明
-
-- `00_reference_project/` - 全项目通用参考资料
-- `01_vfx/` - VFX/AE 制作文件
-- `02_3dcg/` - 3DCG 制作文件（按需创建）
-- `05_stills/` - 预览静帧
-- `06_render/` - 最终渲染输出
-- `07_master_assets/` - 共用素材
-- `08_tools/` - 自动化脚本与工具
-- `09_edit/` - 剪辑文件
-- `98_tmp/` - 临时文件
-- `99_other/` - 其他文件
-
-## 项目模式
-{'单集/PV 模式' if self.project_config.get('no_episode', False) else 'Episode 模式'}
-
-## 使用说明
-请使用 CX Project Manager 管理本项目。
-"""
-        (self.project_base / "README.md").write_text(readme_content, encoding="utf-8")
 
     def create_episode(self, ep_type: str, ep_identifier: str = "") -> Tuple[bool, str]:
         """创建Episode"""
