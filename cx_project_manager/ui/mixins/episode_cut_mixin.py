@@ -20,6 +20,7 @@ class EpisodeCutMixin:
     project_manager: any
     cmb_episode_type: any
     txt_episode: any
+    chk_auto_prefix: any
     chk_no_episode: any
     spin_ep_from: any
     spin_ep_to: any

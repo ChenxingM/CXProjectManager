@@ -258,25 +258,35 @@ class CXProjectManager(QMainWindow, ProjectMixin, EpisodeCutMixin,
 
         # 新建项目
         new_layout = QHBoxLayout()
+        self.project_prefix = QLineEdit()
+        self.project_prefix.setPlaceholderText("前缀 (可选)")
+        self.project_prefix.setMaximumWidth(100)
         self.txt_project_name = QLineEdit()
         self.txt_project_name.setPlaceholderText("输入项目名称")
         self.txt_project_name.returnPressed.connect(self.new_project)
         self.btn_new_project = QPushButton("新建")
         self.btn_new_project.clicked.connect(self.new_project)
+        new_layout.addWidget(self.project_prefix)
         new_layout.addWidget(self.txt_project_name)
         new_layout.addWidget(self.btn_new_project)
-        layout.addLayout(new_layout)
 
         # 打开项目
-        self.btn_open_project = QPushButton("打开项目")
+        self.btn_open_project = QPushButton("打开")
         self.btn_open_project.clicked.connect(self.open_project)
-        layout.addWidget(self.btn_open_project)
+        new_layout.addWidget(self.btn_open_project)
 
-        # Episode 模式选择
+        layout.addLayout(new_layout)
+
+        # 创建选项
+        chk_layout = QHBoxLayout()
+        self.chk_auto_prefix = QCheckBox("将加当前年月为前缀")
         self.chk_no_episode = QCheckBox("单集/PV 模式（支持特殊 Episode）")
         self.chk_no_episode.setToolTip("单集模式下可以创建 op/ed/pv 等特殊类型，但不能创建标准集数 ep")
+        self.chk_auto_prefix.stateChanged.connect(self._toggle_auto_prefix)
         self.chk_no_episode.stateChanged.connect(self._toggle_episode_mode)
-        layout.addWidget(self.chk_no_episode)
+        chk_layout.addWidget(self.chk_auto_prefix)
+        chk_layout.addWidget(self.chk_no_episode)
+        layout.addLayout(chk_layout)
 
         return group
 
@@ -558,6 +568,7 @@ class CXProjectManager(QMainWindow, ProjectMixin, EpisodeCutMixin,
     def _set_initial_state(self):
         """设置初始状态"""
         self._enable_controls(False)
+        self.project_prefix.setEnabled(True)
         self.txt_project_name.setEnabled(True)
         self.btn_new_project.setEnabled(True)
         self.btn_open_project.setEnabled(True)
@@ -589,6 +600,19 @@ class CXProjectManager(QMainWindow, ProjectMixin, EpisodeCutMixin,
             self._enable_controls(False)
             self.statusbar.showMessage("请打开或新建项目以开始使用")
 
+    def _toggle_auto_prefix(self):
+        """切换自动前缀选项"""
+        if self.chk_auto_prefix.isChecked():
+            from datetime import datetime
+            # 前缀格式 24_09 (年_作品序号)
+            prefix = datetime.now().strftime("%y_")
+            self.project_prefix.setText(prefix)
+            self.project_prefix.setToolTip("自动添加当前年作为前缀")
+        else:
+            self.project_prefix.clear()
+            self.project_prefix.setEnabled(True)
+            self.project_prefix.setToolTip("")
+
     def _refresh_all_views(self):
         """刷新所有视图"""
         self._refresh_tree()
@@ -616,7 +640,7 @@ class CXProjectManager(QMainWindow, ProjectMixin, EpisodeCutMixin,
     def _enable_controls(self, enabled: bool):
         """启用/禁用控件"""
         controls = [
-            self.chk_no_episode, self.episode_group, self.cmb_episode_type,
+            self.chk_no_episode, self.chk_auto_prefix, self.episode_group, self.cmb_episode_type,
             self.txt_episode, self.btn_create_episode, self.btn_batch_episode,
             self.spin_ep_from, self.spin_ep_to, self.cmb_cut_episode,
             self.txt_cut, self.btn_create_cut, self.btn_batch_cut,
