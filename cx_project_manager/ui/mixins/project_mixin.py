@@ -33,7 +33,8 @@ class ProjectMixin:
     def new_project(self):
         """新建项目"""
         project_name = self.txt_project_name.text().strip()
-        project_display_name = None
+        project_prefix = self.project_prefix.text().strip() if hasattr(self, 'project_prefix') else ""
+
         if not project_name:
             QMessageBox.warning(self, "错误", "请输入项目名称")
             self.txt_project_name.setFocus()
@@ -50,25 +51,34 @@ class ProjectMixin:
                 return
             base_folder = Path(base_folder)
 
-        # 检查前缀 (前缀_项目名 作为路径，但项目名不变)
-        if self.project_prefix:
-            project_name = f"{self.project_prefix}_{project_name}"
+        # 确定项目路径名和显示名
+        # 前缀只影响路径，不影响显示名称
+        if project_prefix:
+            # 路径使用: 前缀_项目名
+            project_path_name = f"{project_prefix}_{project_name}"
+            # 显示名称只用项目名（不含前缀）
+            project_display_name = project_name
+        else:
+            # 没有前缀时，路径名和显示名称相同
+            project_path_name = project_name
             project_display_name = project_name
 
         # 检查项目是否已存在
-        project_path = base_folder / project_name
+        project_path = base_folder / project_path_name
         if project_path.exists():
             reply = QMessageBox.question(
                 self, "确认",
-                f"项目 '{project_display_name}' 已存在，是否覆盖？",
+                f"项目路径 '{project_path_name}' 已存在，是否覆盖？",
                 QMessageBox.Yes | QMessageBox.No
             )
             if reply != QMessageBox.Yes:
                 return
 
         # 创建项目
+        # 使用 project_path_name 作为实际项目名（用于文件系统路径）
+        # 使用 project_display_name 作为显示名称
         no_episode = self.chk_no_episode.isChecked()
-        if self.project_manager.create_project(project_name, base_folder, no_episode):
+        if self.project_manager.create_project(project_path_name, project_display_name, base_folder, no_episode):
             self.project_base = self.project_manager.project_base
             self.project_config = self.project_manager.project_config
 
@@ -81,13 +91,22 @@ class ProjectMixin:
                 self.project_config["episode_count"] = len(episodes)
                 self.project_config["episode_list"] = sorted(episodes.keys())
                 from ...utils.convert_registry_to_csv import convert_registry_to_csv
-                convert_registry_to_csv(self.project_base)
+                convert_registry_to_csv(base_folder)
 
             self.project_changed.emit()
             self._add_to_recent(str(self.project_base))
             self.txt_project_name.clear()
 
-            QMessageBox.information(self, "成功", f"项目 '{project_name}' 创建成功！")
+            # 清空前缀输入框（如果存在）
+            if hasattr(self, 'project_prefix'):
+                self.project_prefix.clear()
+
+            # 显示成功消息，使用显示名称
+            QMessageBox.information(
+                self, "成功",
+                f"项目 '{project_display_name}' 创建成功！\n"
+                f"项目路径: {project_path}"
+            )
 
     def open_project(self):
         """打开已有项目"""

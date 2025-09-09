@@ -640,7 +640,7 @@ class CXProjectManager(QMainWindow, ProjectMixin, EpisodeCutMixin,
     def _enable_controls(self, enabled: bool):
         """启用/禁用控件"""
         controls = [
-            self.chk_no_episode, self.chk_auto_prefix, self.episode_group, self.cmb_episode_type,
+            self.chk_no_episode, self.episode_group, self.cmb_episode_type,
             self.txt_episode, self.btn_create_episode, self.btn_batch_episode,
             self.spin_ep_from, self.spin_ep_to, self.cmb_cut_episode,
             self.txt_cut, self.btn_create_cut, self.btn_batch_cut,
