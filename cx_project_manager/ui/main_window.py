@@ -128,6 +128,7 @@ class CXProjectManager(QMainWindow, ProjectMixin, EpisodeCutMixin,
         """初始化控件变量"""
         # 项目管理
         self.lbl_project_path = None
+        self.project_prefix = None
         self.txt_project_name = None
         self.btn_new_project = None
         self.btn_open_project = None

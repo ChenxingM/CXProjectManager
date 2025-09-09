@@ -24,7 +24,8 @@ class ProjectMixin:
     project_base: Optional[Path]
     project_config: Optional[dict]
     app_settings: any
-    txt_project_name: any
+    project_prefix: str
+    txt_project_name: str
     chk_no_episode: any
     statusbar: any
     recent_menu: any
@@ -32,6 +33,7 @@ class ProjectMixin:
     def new_project(self):
         """新建项目"""
         project_name = self.txt_project_name.text().strip()
+        project_display_name = None
         if not project_name:
             QMessageBox.warning(self, "错误", "请输入项目名称")
             self.txt_project_name.setFocus()
@@ -48,12 +50,17 @@ class ProjectMixin:
                 return
             base_folder = Path(base_folder)
 
+        # 检查前缀 (前缀_项目名 作为路径，但项目名不变)
+        if self.project_prefix:
+            project_name = f"{self.project_prefix}_{project_name}"
+            project_display_name = project_name
+
         # 检查项目是否已存在
         project_path = base_folder / project_name
         if project_path.exists():
             reply = QMessageBox.question(
                 self, "确认",
-                f"项目 '{project_name}' 已存在，是否覆盖？",
+                f"项目 '{project_display_name}' 已存在，是否覆盖？",
                 QMessageBox.Yes | QMessageBox.No
             )
             if reply != QMessageBox.Yes:
