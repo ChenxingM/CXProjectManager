@@ -421,7 +421,7 @@ class CXProjectManager(QMainWindow, ProjectMixin, EpisodeCutMixin,
 
             txt_path = QLineEdit()
             txt_path.setPlaceholderText(f"{label} 文件路径")
-            txt_path.setReadOnly(True)
+            txt_path.setReadOnly(False)
             self.material_paths[key] = txt_path
             mat_layout.addWidget(txt_path)
 
