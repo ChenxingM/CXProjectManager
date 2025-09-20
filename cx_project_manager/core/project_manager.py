@@ -11,6 +11,8 @@ from pathlib import Path
 from typing import Dict, List, Optional, Tuple, Any
 import re
 
+from PySide6.QtWidgets import QMessageBox
+
 from ..utils.models import ProjectPaths, ReuseCut
 from ..utils.utils import (
     ensure_dir, copy_file_safe, zero_pad, parse_cut_id, format_cut_id,
