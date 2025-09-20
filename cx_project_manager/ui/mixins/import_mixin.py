@@ -363,7 +363,12 @@ class ImportMixin:
 
         elif settings["scope"] >= 1:  # 指定Episode
             ep_id = settings["episode"]
-            cuts = self.project_config["episodes"][ep_id]
+            if not ep_id and self.project_config.get("no_episode", False):
+                # 没有episode的项目，使用cuts列表
+                cuts = self.project_config.get("cuts", [])
+            else:
+                # 有episode的项目或者指定了episode
+                cuts = self.project_config["episodes"][ep_id]
 
             if settings["scope"] == 2:
                 cut_from = settings["cut_from"]
@@ -373,7 +378,9 @@ class ImportMixin:
             for cut_id in cuts:
                 if cut_id in reuse_cuts_map and reuse_cuts_map[cut_id].main_cut != cut_id:
                     continue
-                targets.append((ep_id, cut_id))
+                # 如果ep_id是空字符串且项目没有episode，传递None
+                episode_id = None if (not ep_id and self.project_config.get("no_episode", False)) else ep_id
+                targets.append((episode_id, cut_id))
 
         # 执行复制
         counts = {"success": 0, "skip": 0, "overwrite": 0, "reuse_skip": 0}
