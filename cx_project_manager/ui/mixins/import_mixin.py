@@ -124,7 +124,7 @@ class ImportMixin:
             if not src.exists():
                 return False
 
-            proj_name = self.project_base.name
+            display_name = self.project_config.get("project_display_name", self.project_base.name)
 
             # 解析目标路径
             if "|" in target:
@@ -142,9 +142,9 @@ class ImportMixin:
             reuse_cut = self.project_manager.get_reuse_cut_for_cut(cut_id)
             if reuse_cut:
                 cut_id = reuse_cut.main_cut
-                base_name = f"{proj_name}_{ep_part}{reuse_cut.get_display_name()}"
+                base_name = f"{display_name}_{ep_part}{reuse_cut.get_display_name()}"
             else:
-                base_name = f"{proj_name}_{ep_part}{cut_id}"
+                base_name = f"{display_name}_{ep_part}{cut_id}"
 
             # 根据类型处理
             if material_type == "bg":
@@ -279,7 +279,7 @@ class ImportMixin:
             return
 
         # 复制模板
-        proj_name = self.project_base.name
+        display_name = self.project_config.get("project_display_name", self.project_base.name)
         copied = 0
 
         for template in template_dir.glob("*.aep"):
@@ -287,9 +287,9 @@ class ImportMixin:
 
             if reuse_cut:
                 cuts_str = reuse_cut.get_display_name()
-                base_name = f"{proj_name}_{ep_id.upper() + '_' if ep_id else ''}{cuts_str}"
+                base_name = f"{display_name}_{ep_id.upper() + '_' if ep_id else ''}{cuts_str}"
             else:
-                base_name = f"{proj_name}_{ep_id.upper() + '_' if ep_id else ''}{cut_id}"
+                base_name = f"{display_name}_{ep_id.upper() + '_' if ep_id else ''}{cut_id}"
 
             version_part = template_stem[template_stem.rfind('_v'):] if '_v' in template_stem else "_v0"
             aep_name = f"{base_name}{version_part}{template.suffix}"
@@ -336,7 +336,7 @@ class ImportMixin:
         """根据设置批量复制"""
         template_dir = self.project_base / "07_master_assets" / "aep_templates"
         templates = list(template_dir.glob("*.aep"))
-        proj_name = self.project_base.name
+        display_name = self.project_config.get("project_display_name", self.project_base.name)
 
         # 收集目标
         targets = []
@@ -403,9 +403,9 @@ class ImportMixin:
 
                 if is_reuse:
                     cuts_str = reuse_cut.get_display_name()
-                    base_name = f"{proj_name}_{ep_id.upper() + '_' if ep_id else ''}{cuts_str}"
+                    base_name = f"{display_name}_{ep_id.upper() + '_' if ep_id else ''}{cuts_str}"
                 else:
-                    base_name = f"{proj_name}_{ep_id.upper() + '_' if ep_id else ''}{cut_id}"
+                    base_name = f"{display_name}_{ep_id.upper() + '_' if ep_id else ''}{cut_id}"
 
                 version_part = template_stem[template_stem.rfind('_v'):] if '_v' in template_stem else "_v0"
                 aep_name = f"{base_name}{version_part}{template.suffix}"

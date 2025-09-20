@@ -838,7 +838,9 @@ class ProjectManager:
         if not template_dir.exists():
             return
 
-        proj_name = self.project_base.name
+        display_name = self.project_config.get("project_display_name", self.project_base.name)
+        print("display_name:", display_name)
+        print("pro",self.project_config.get("project_display_name"))
 
         for template in template_dir.glob("*.aep"):
             template_stem = template.stem
@@ -846,9 +848,9 @@ class ProjectManager:
 
             if episode_id:
                 ep_part = episode_id.upper()
-                aep_name = f"{proj_name}_{ep_part}_{cut_id}{version_part}{template.suffix}"
+                aep_name = f"{display_name}_{ep_part}_{cut_id}{version_part}{template.suffix}"
             else:
-                aep_name = f"{proj_name}_{cut_id}{version_part}{template.suffix}"
+                aep_name = f"{display_name}_{cut_id}{version_part}{template.suffix}"
 
             copy_file_safe(template, cut_path / aep_name)
 
