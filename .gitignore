@@ -8,3 +8,5 @@ cx_project_manager/core/__pycache__/
 cx_project_manager/ui/__pycache__/
 
 *.pyc
+
+.claude/

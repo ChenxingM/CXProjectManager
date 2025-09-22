@@ -16,8 +16,9 @@ from PySide6.QtWidgets import QMessageBox
 from ..utils.models import ProjectPaths, ReuseCut
 from ..utils.utils import (
     ensure_dir, copy_file_safe, zero_pad, parse_cut_id, format_cut_id,
-    extract_version_from_filename
+    extract_version_from_filename, extract_version_string_from_filename
 )
+from ..utils.version_mapper import get_global_version_mapper
 
 
 class ProjectManager:
@@ -488,6 +489,8 @@ class ProjectManager:
 
             # 兼容性处理
             self._ensure_compatibility()
+
+            # 全局版本映射器会自动初始化，无需特殊处理
 
             # 只更新当前项目的访问时间，不触发完整更新
             self._update_registry_access_time_only()
@@ -1010,3 +1013,7 @@ class ProjectManager:
             "total_cuts": total_cuts,
             "reuse_cuts": len(self.project_config.get("reuse_cuts", []))
         }
+
+    def get_version_mapper(self):
+        """获取全局版本映射器"""
+        return get_global_version_mapper()
