@@ -617,7 +617,7 @@ class VersionMixin:
         from cx_project_manager.ui.mixins.version_statistics_dialog import ProjectStatisticsDialog
 
         # 显示综合统计对话框
-        dialog = ProjectStatisticsDialog(self.project_config, version_stats, self)
+        dialog = ProjectStatisticsDialog(self.project_config, version_stats, self.project_base, self)
         dialog.exec_()
 
     def _get_version_statistics(self) -> Dict[str, int]:

@@ -10,7 +10,7 @@ from PySide6.QtWidgets import QMessageBox, QFileDialog, QDialog, QApplication, Q
 from PySide6.QtCore import Qt
 
 from cx_project_manager.utils.utils import ensure_dir, copy_file_safe, open_in_file_manager, \
-    extract_version_from_filename
+    extract_version_from_filename, extract_version_string_from_filename
 from cx_project_manager.utils.models import ReuseCut
 from cx_project_manager.utils.constants import IMAGE_EXTENSIONS
 from cx_project_manager.ui.dialogs import VersionConfirmDialog, BatchAepDialog
