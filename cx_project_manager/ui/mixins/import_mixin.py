@@ -414,7 +414,7 @@ class ImportMixin:
                 else:
                     base_name = f"{display_name}_{ep_id.upper() + '_' if ep_id else ''}{cut_id}"
 
-                version_part = template_stem[template_stem.rfind('_v'):] if '_v' in template_stem else "_v0"
+                version_part = "_G1"
                 aep_name = f"{base_name}{version_part}{template.suffix}"
                 dst = cut_path / aep_name
 
