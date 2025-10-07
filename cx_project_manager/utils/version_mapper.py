@@ -14,8 +14,12 @@ class VersionMapper:
     # 版本映射配置
     VERSION_MAPPING = {
         # 特定版本号映射
-        "V0": "T摄",
+        "V0": "假本摄",
         # 字母前缀映射（用于v1, v2, V1, V2等）
+        "G": "线摄G{}",
+        "S": "线摄S{}",
+        "T": "T摄T{}",
+        "P": "CG摄P{}",
         "V": "本摄V{}",
     }
 
@@ -80,7 +84,7 @@ class VersionMapper:
         获取支持的版本前缀列表
 
         Returns:
-            list: 支持的前缀列表，如 ['v', 'V', 'p', 'P', 'f', 'F']
+            list: 支持的前缀列表，如 ['v', 'V', 'p', 'P']
         """
         prefixes = []
         for key in self.version_mapping.keys():
