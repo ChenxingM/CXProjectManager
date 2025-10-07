@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """
-自定义控件模块 - 完整版本
+自定义控件模块
 """
 
 from pathlib import Path
