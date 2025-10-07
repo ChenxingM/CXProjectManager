@@ -111,9 +111,30 @@ class FileInfo:
     def version_str(self) -> str:
         """获取版本字符串"""
         if self.version is not None:
-            if self.is_aep:
-                return "T摄" if self.version == 0 else f"本摄V{self.version}"
+            # 构建版本字符串
+            if self.version == 0:
+                version_key = "V0"
             else:
-                prefix = "V" if "V" in self.name or "v" in self.name else "T"
-                return f"{prefix}{self.version}"
+                # 从文件名中提取前缀字母
+                prefix = "V"  # 默认前缀
+
+                # 对于 TST_002_T1.aep 格式的文件名，提取第3部分
+                name_parts = self.name.split("_")
+                if len(name_parts) >= 3:
+                    # 获取第3部分（如 "T1", "G1", "V1"）
+                    version_part = name_parts[2].upper()
+                    # 去掉文件扩展名
+                    version_part = version_part.split('.')[0]
+
+                    # 检查是否以支持的前缀开头
+                    for char in ['G', 'S', 'T', 'P', 'V']:
+                        if version_part.startswith(char):
+                            prefix = char
+                            break
+
+                version_key = prefix
+
+            # 使用全局版本映射器
+            from .version_mapper import get_version_label_global
+            return get_version_label_global(f"{version_key.lower()}{self.version}")
         return ""
