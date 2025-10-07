@@ -59,27 +59,33 @@ def open_in_file_manager(path: Path) -> None:
 
 
 def extract_version_from_filename(filename: str) -> Optional[int]:
-    """从文件名中提取版本号（支持不区分大小写）"""
-    if "_v0" in filename.lower():
-        return 0
+    """从文件名中提取版本号"""
+    # 检查所有前缀的v0情况
+    filename_lower = filename.lower()
+    for prefix in ['g', 's', 't', 'p', 'v']:
+        if f"_{prefix}0" in filename_lower:
+            return 0
+
     match = VERSION_PATTERN.search(filename)
     return int(match.group(1)) if match else None
 
 
 def extract_version_string_from_filename(filename: str) -> Optional[str]:
-    """从文件名中提取完整版本字符串（如v1, V2, p3, f1等，支持不区分大小写）"""
+    """从文件名中提取完整版本字符串"""
     # 查找最后一个_后跟字母和数字的模式
     import re
-    pattern = re.compile(r'_([a-zA-Z])(\d+)(?:\.\w+)?$')
+    pattern = re.compile(r'_([GSTPVgsptv])(\d+)(?:\.\w+)?$')
     match = pattern.search(filename)
     if match:
-        prefix = match.group(1).lower()  # 转为小写进行统一处理
+        prefix = match.group(1).lower()
         number = match.group(2)
         return f"{prefix}{number}"
 
-    # 处理特殊的v0情况
-    if "_v0" in filename.lower():
-        return "v0"
+    # 处理特殊的所有前缀的v0情况
+    filename_lower = filename.lower()
+    for prefix in ['g', 's', 't', 'p', 'v']:
+        if f"_{prefix}0" in filename_lower:
+            return f"{prefix}0"
 
     return None
 

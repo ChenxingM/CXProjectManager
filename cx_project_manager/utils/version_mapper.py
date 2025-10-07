@@ -29,7 +29,7 @@ class VersionMapper:
         根据版本号生成显示标签
 
         Args:
-            version_str: 版本字符串，如 "v1", "V2", "p3" 等
+            version_str: 版本字符串，如 "v1", "V2", "P3" 等
 
         Returns:
             str: 映射后的显示标签，如 "本摄V1", "T摄" 等

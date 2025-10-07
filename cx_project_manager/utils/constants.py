@@ -30,7 +30,7 @@ THREED_EXTENSIONS = {
 # ================================ 正则表达式 ================================ #
 
 # 版本号正则表达式
-VERSION_PATTERN = re.compile(r'_[TVtv](\d+)(?:\.\w+)?$')
+VERSION_PATTERN = re.compile(r'_[GSTPVgsptv](\d+)(?:\.\w+)?$')
 
 # Cut编号正则表达式（支持数字+字母后缀）
 CUT_PATTERN = re.compile(r'^(\d+)([A-Za-z]?)$')
