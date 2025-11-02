@@ -49,7 +49,6 @@ PROJECT_STRUCTURE_NAMES = {
     "02_3dcg": "02_3DCG",
     "03_preview": "03_预览",
     "04_log": "04_日志",
-    "05_output_mixdown": "05_输出混音",
     "05_stills": "05_缩略图",
     "06_render": "06_渲染输出",
     "07_master_assets": "07_主资产",

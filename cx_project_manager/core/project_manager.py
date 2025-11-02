@@ -620,8 +620,7 @@ class ProjectManager:
             if no_episode:
                 dirs.extend([
                     "01_vfx",
-                    "02_comp",
-                    "03_render"
+                    "02_3dcg"
                 ])
 
             for dir_path in dirs:
@@ -652,6 +651,7 @@ class ProjectManager:
 {config.get('project_name', 'project')}/
 ├── 00_reference_project/  # 项目参考资料
 ├── 01_vfx/               # VFX制作文件
+├── 02_3dcg/              # 3D文件
 ├── 05_stills/            # 静帧预览
 ├── 06_render/            # 渲染输出
 ├── 07_master_assets/     # 共用素材
