@@ -1,4 +1,12 @@
 sss
 .idea/
 
-_utils/__pycache__/
+cx_project_manager/utils/__pycache__/
+
+cx_project_manager/core/__pycache__/
+
+cx_project_manager/ui/__pycache__/
+
+*.pyc
+
+.claude/
